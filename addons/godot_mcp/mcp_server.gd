@@ -1,16 +1,134 @@
 @tool
 extends EditorPlugin
 
+const MCP_PANEL_TITLE := "MCP Server"
+const SHOW_PANEL_MENU_ITEM := "Show MCP Panel"
+const TOOLBAR_BUTTON_TEXT := "MCP"
+
 var tcp_server := TCPServer.new()
 var port := 9080
 var handshake_timeout := 3000 # ms
 var debug_mode := true
 var log_detailed := true  # Enable detailed logging
 var command_handler = null  # Command handler reference
+var mcp_panel: Control = null  # Bottom panel instance
+var mcp_panel_button: Button = null  # Bottom panel tab button
+var toolbar_button: Button = null  # Main toolbar shortcut button
+var tool_menu_registered := false
 
 signal client_connected(id)
 signal client_disconnected(id)
 signal command_received(client_id, command)
+
+var editor_logger = null
+
+class MCPEditorLogger extends Logger:
+	const MAX_ENTRIES := 2000
+	
+	var _entries: Array[Dictionary] = []
+	var _next_index := 0
+	var _mutex := Mutex.new()
+	
+	func _strip_ansi_sequences(message: String) -> String:
+		var ansi_regex := RegEx.new()
+		ansi_regex.compile("(?:\\x1b)?\\[[0-9;]*m")
+		return ansi_regex.sub(message, "", true)
+	
+	func _strip_control_characters(message: String) -> String:
+		var control_regex := RegEx.new()
+		control_regex.compile("[\\x00-\\x08\\x0B-\\x1F\\x7F]")
+		return control_regex.sub(message, "", true)
+	
+	func _normalize_message(message: String) -> String:
+		var sanitized := _strip_ansi_sequences(message)
+		sanitized = _strip_control_characters(sanitized)
+		return sanitized.strip_edges()
+	
+	func _is_transport_noise(message: String) -> bool:
+		if message.begins_with("[Client "):
+			return true
+		return (
+			message.begins_with("Sending response to client ")
+			or message.begins_with("Processing command: ")
+			or message.begins_with("Executing script... ready func")
+			or message.begins_with("result_data: ")
+		)
+	
+	func _append_entry(entry_type: String, message: String) -> void:
+		var normalized_message := _normalize_message(message)
+		if normalized_message.is_empty() or _is_transport_noise(normalized_message):
+			return
+		
+		_mutex.lock()
+		_entries.append({
+			"index": _next_index,
+			"type": entry_type,
+			"message": normalized_message,
+		})
+		_next_index += 1
+		if _entries.size() > MAX_ENTRIES:
+			_entries.remove_at(0)
+		_mutex.unlock()
+	
+	func _log_message(message: String, error: bool) -> void:
+		var normalized_message := _normalize_message(message)
+		if error:
+			if normalized_message.begins_with("WARNING: "):
+				_append_entry("Warning", normalized_message.trim_prefix("WARNING: "))
+				return
+			if normalized_message.begins_with("SCRIPT ERROR: "):
+				_append_entry("Script", normalized_message.trim_prefix("SCRIPT ERROR: "))
+				return
+			if normalized_message.begins_with("ERROR: "):
+				_append_entry("Error", normalized_message.trim_prefix("ERROR: "))
+				return
+		_append_entry("Error" if error else "General", normalized_message)
+	
+	func _classify_error_entry(error_type: int, function: String, file: String) -> String:
+		match error_type:
+			Logger.ERROR_TYPE_WARNING:
+				return "Warning"
+			Logger.ERROR_TYPE_SCRIPT:
+				return "Script"
+			Logger.ERROR_TYPE_ERROR, Logger.ERROR_TYPE_SHADER:
+				return "Error"
+		if function == "push_warning":
+			return "Warning"
+		if file.begins_with("gdscript://") or file.ends_with(".gd"):
+			return "Script"
+		return "Error"
+	
+	func _extract_error_message(function: String, file: String, line: int, code: String, rationale: String) -> String:
+		var message := _normalize_message(rationale)
+		if message.is_empty():
+			message = _normalize_message(code)
+		if not message.is_empty():
+			return message
+		if function == "push_warning":
+			return "Warning emitted"
+		if function == "push_error":
+			return "Error emitted"
+		return "%s (%s:%d)" % [function, file, line]
+	
+	func _log_error(
+		function: String,
+		file: String,
+		line: int,
+		code: String,
+		rationale: String,
+		editor_notify: bool,
+		error_type: int,
+		script_backtraces
+	) -> void:
+		var entry_type := _classify_error_entry(error_type, function, file)
+		var message := _extract_error_message(function, file, line, code, rationale)
+		_append_entry(entry_type, message)
+	
+	func get_entries() -> Array[Dictionary]:
+		_mutex.lock()
+		var copy: Array[Dictionary] = _entries.duplicate(true)
+		_mutex.unlock()
+		return copy
 
 class WebSocketClient:
 	var tcp: StreamPeerTCP
@@ -36,6 +154,8 @@ var next_client_id := 1
 func _enter_tree():
 	# Store plugin instance for EditorInterface access
 	Engine.set_meta("GodotMCPPlugin", self)
+	editor_logger = MCPEditorLogger.new()
+	OS.add_logger(editor_logger)
 	
 	print("\n=== MCP SERVER STARTING ===")
 	
@@ -50,26 +170,92 @@ func _enter_tree():
 	self.connect("command_received", Callable(command_handler, "_handle_command"))
 	
 	# Start WebSocket server
-	var err = tcp_server.listen(port)
-	if err == OK:
-		print("Listening on port", port)
-		set_process(true)
-	else:
-		printerr("Failed to listen on port", port, "error:", err)
+	var err = start_server()
+	if err != OK:
+		printerr("Failed to start server: ", err)
+	
+	_create_bottom_panel()
+	_create_toolbar_button()
+	add_tool_menu_item(SHOW_PANEL_MENU_ITEM, Callable(self, "_show_mcp_panel"))
+	tool_menu_registered = true
+	_show_mcp_panel()
 	
 	print("=== MCP SERVER INITIALIZED ===\n")
 
 func _exit_tree():
+	if editor_logger:
+		OS.remove_logger(editor_logger)
+		editor_logger = null
+	
 	# Remove plugin instance from Engine metadata
 	if Engine.has_meta("GodotMCPPlugin"):
 		Engine.remove_meta("GodotMCPPlugin")
 	
-	if tcp_server and tcp_server.is_listening():
-		tcp_server.stop()
+	if tool_menu_registered:
+		remove_tool_menu_item(SHOW_PANEL_MENU_ITEM)
+		tool_menu_registered = false
 	
+	if toolbar_button and is_instance_valid(toolbar_button):
+		remove_control_from_container(CONTAINER_TOOLBAR, toolbar_button)
+		toolbar_button.queue_free()
+		toolbar_button = null
+	
+	if mcp_panel and is_instance_valid(mcp_panel):
+		remove_control_from_bottom_panel(mcp_panel)
+		mcp_panel.queue_free()
+		mcp_panel = null
+		mcp_panel_button = null
+	
+	stop_server()
 	clients.clear()
 	
 	print("=== MCP SERVER SHUTDOWN ===")
+
+func _create_bottom_panel():
+	if mcp_panel and is_instance_valid(mcp_panel):
+		return
+	
+	mcp_panel = load("res://addons/godot_mcp/ui/mcp_panel.tscn").instantiate()
+	mcp_panel.set_server(self)
+	mcp_panel_button = add_control_to_bottom_panel(mcp_panel, MCP_PANEL_TITLE)
+	if mcp_panel_button and is_instance_valid(mcp_panel_button):
+		mcp_panel_button.visible = true
+
+func _create_toolbar_button():
+	if toolbar_button and is_instance_valid(toolbar_button):
+		return
+	
+	toolbar_button = Button.new()
+	toolbar_button.text = TOOLBAR_BUTTON_TEXT
+	toolbar_button.tooltip_text = SHOW_PANEL_MENU_ITEM
+	toolbar_button.pressed.connect(_show_mcp_panel)
+	add_control_to_container(CONTAINER_TOOLBAR, toolbar_button)
+
+func _show_mcp_panel():
+	if not (mcp_panel and is_instance_valid(mcp_panel)):
+		return
+	
+	if mcp_panel_button and is_instance_valid(mcp_panel_button):
+		mcp_panel_button.visible = true
+	
+	make_bottom_panel_item_visible(mcp_panel)
+
+func _make_visible(visible):
+	if not (mcp_panel and is_instance_valid(mcp_panel)):
+		return
+	
+	if mcp_panel_button and is_instance_valid(mcp_panel_button):
+		mcp_panel_button.visible = visible
+	
+	if visible:
+		_show_mcp_panel()
+	else:
+		hide_bottom_panel()
+
+func get_editor_log_entries() -> Array[Dictionary]:
+	if editor_logger == null:
+		return []
+	return editor_logger.get_entries()
 
 func _log(client_id, message):
 	if log_detailed:
@@ -257,11 +443,33 @@ func send_response(client_id: int, response: Dictionary) -> int:
 func is_server_active() -> bool:
 	return tcp_server.is_listening()
 
+func start_server() -> int:
+	if is_server_active():
+		return ERR_ALREADY_IN_USE
+	var err = tcp_server.listen(port)
+	if err == OK:
+		print("MCP WebSocket server started on port ", port)
+		set_process(true)
+		return OK
+	else:
+		printerr("Failed to listen on port ", port, " error: ", err)
+		return err
+
 func stop_server() -> void:
 	if is_server_active():
 		tcp_server.stop()
 		clients.clear()
+		set_process(false)
 		print("MCP WebSocket server stopped")
+
+func set_port(new_port: int) -> void:
+	if is_server_active():
+		push_error("Cannot change port while server is active")
+		return
+	port = new_port
+
+func get_client_count() -> int:
+	return clients.size()
 		
 func get_port() -> int:
 	return port

@@ -2,6 +2,8 @@
 class_name MCPCommandHandler
 extends Node
 
+const DEBUG_COMMANDS_SCRIPT = preload("res://addons/godot_mcp/commands/debug_commands.gd")
+
 var _websocket_server
 var _command_processors = []
 
@@ -24,6 +26,7 @@ func _initialize_command_processors():
 	var project_commands = MCPProjectCommands.new()
 	var editor_commands = MCPEditorCommands.new()
 	var editor_script_commands = MCPEditorScriptCommands.new()  # Add our new processor
+	var debug_commands = DEBUG_COMMANDS_SCRIPT.new()
 	
 	# Set server reference for all processors
 	node_commands._websocket_server = _websocket_server
@@ -32,6 +35,7 @@ func _initialize_command_processors():
 	project_commands._websocket_server = _websocket_server
 	editor_commands._websocket_server = _websocket_server
 	editor_script_commands._websocket_server = _websocket_server  # Set server reference
+	debug_commands._websocket_server = _websocket_server
 	
 	# Add them to our processor list
 	_command_processors.append(node_commands)
@@ -40,6 +44,7 @@ func _initialize_command_processors():
 	_command_processors.append(project_commands)
 	_command_processors.append(editor_commands)
 	_command_processors.append(editor_script_commands)  # Add to processor list
+	_command_processors.append(debug_commands)
 	
 	# Add them as children for proper lifecycle management
 	add_child(node_commands)
@@ -48,6 +53,7 @@ func _initialize_command_processors():
 	add_child(project_commands)
 	add_child(editor_commands)
 	add_child(editor_script_commands)  # Add as child
+	add_child(debug_commands)
 
 func _handle_command(client_id: int, command: Dictionary) -> void:
 	var command_type = command.get("type", "")

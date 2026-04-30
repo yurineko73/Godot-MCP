@@ -47,28 +47,38 @@ import { FastMCP } from 'fastmcp';
 import { nodeTools } from './tools/node_tools.js';
 import { scriptTools } from './tools/script_tools.js';
 import { sceneTools } from './tools/scene_tools.js';
+import { editorTools } from './tools/editor_tools.js';
+import { debugTools } from './tools/debug_tools.js';
 import { getGodotConnection } from './utils/godot_connection.js';
 // Import resources
 import { sceneListResource, sceneStructureResource } from './resources/scene_resources.js';
 import { scriptResource, scriptListResource, scriptMetadataResource } from './resources/script_resources.js';
 import { projectStructureResource, projectSettingsResource, projectResourcesResource } from './resources/project_resources.js';
 import { editorStateResource, selectedNodeResource, currentScriptResource } from './resources/editor_resources.js';
+// Supress all debug output during startup to keep stdout clean for MCP stdio transport.
+// Any output to stdout or stderr before the transport is ready will corrupt the protocol.
+var originalConsoleError = console.error;
+var originalConsoleWarn = console.warn;
+var originalConsoleLog = console.log;
+var noop = function () { };
+console.error = noop;
+console.warn = noop;
+console.log = noop;
 /**
  * Main entry point for the Godot MCP server
  */
 function main() {
     return __awaiter(this, void 0, void 0, function () {
-        var server, godot, error_1, err, cleanup;
+        var server, godot, error_1, cleanup;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
-                    console.error('Starting Godot MCP server...');
                     server = new FastMCP({
                         name: 'GodotMCP',
                         version: '1.0.0',
                     });
                     // Register all tools
-                    __spreadArray(__spreadArray(__spreadArray([], nodeTools, true), scriptTools, true), sceneTools, true).forEach(function (tool) {
+                    __spreadArray(__spreadArray(__spreadArray(__spreadArray(__spreadArray([], nodeTools, true), scriptTools, true), sceneTools, true), editorTools, true), debugTools, true).forEach(function (tool) {
                         server.addTool(tool);
                     });
                     // Register all resources
@@ -91,19 +101,23 @@ function main() {
                     return [4 /*yield*/, godot.connect()];
                 case 2:
                     _a.sent();
-                    console.error('Successfully connected to Godot WebSocket server');
                     return [3 /*break*/, 4];
                 case 3:
                     error_1 = _a.sent();
-                    err = error_1;
-                    console.warn("Could not connect to Godot: ".concat(err.message));
-                    console.warn('Will retry connection when commands are executed');
                     return [3 /*break*/, 4];
-                case 4:
-                    // Start the server
-                    server.start({
+                case 4: 
+                // Start the transport BEFORE restoring console output
+                return [4 /*yield*/, server.start({
                         transportType: 'stdio',
-                    });
+                    })];
+                case 5:
+                    // Start the transport BEFORE restoring console output
+                    _a.sent();
+                    // Transport is now active - it's safe to restore stderr logging.
+                    // stdout must remain MCP-only; stderr can be used for user-facing logs.
+                    console.error = originalConsoleError;
+                    console.warn = originalConsoleWarn;
+                    // console.log remains suppressed to keep stdout clean
                     console.error('Godot MCP server started');
                     cleanup = function () {
                         console.error('Shutting down Godot MCP server...');
@@ -120,7 +134,7 @@ function main() {
 }
 // Start the server
 main().catch(function (error) {
-    console.error('Failed to start Godot MCP server:', error);
+    originalConsoleError('Failed to start Godot MCP server:', error);
     process.exit(1);
 });
 //# sourceMappingURL=index.js.map

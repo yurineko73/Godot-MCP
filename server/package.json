@@ -20,7 +20,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "fastmcp": "^1.20.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "fastmcp": "^3.0.0",
     "websocket": "^1.0.35",
     "ws": "^8.13.0",
     "zod": "^3.21.4"
@@ -28,7 +29,7 @@
   "devDependencies": {
     "@types/node": "^20.3.1",
     "@types/ws": "^8.5.5",
-    "nodemon": "^2.0.22",
+    "nodemon": "^3.1.14",
     "typescript": "^5.1.3"
   }
 }

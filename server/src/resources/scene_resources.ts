@@ -1,11 +1,13 @@
-import { Resource, ResourceTemplate } from 'fastmcp';
+import type { Resource, ResourceTemplate } from 'fastmcp';
 import { getGodotConnection } from '../utils/godot_connection.js';
 import { z } from 'zod';
+
+type Auth = Record<string, unknown> | undefined;
 
 /**
  * Resource that provides a list of all scenes in the project
  */
-export const sceneListResource: Resource = {
+export const sceneListResource = {
   uri: 'godot/scenes',
   name: 'Godot Scene List',
   mimeType: 'application/json',
@@ -38,12 +40,12 @@ export const sceneListResource: Resource = {
       throw error;
     }
   }
-};
+} as const satisfies Resource<Auth>;
 
 /**
  * Resource that provides detailed information about a specific scene
  */
-export const sceneStructureResource: Resource = {
+export const sceneStructureResource = {
     uri: 'godot/scene/current',
     name: 'Godot Scene Structure',
     mimeType: 'application/json',
@@ -62,4 +64,4 @@ export const sceneStructureResource: Resource = {
             throw error;
         }
     }
-};
+} as const satisfies Resource<Auth>;

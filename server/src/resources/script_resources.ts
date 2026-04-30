@@ -1,12 +1,14 @@
-import { Resource, ResourceTemplate } from 'fastmcp';
+import type { Resource, ResourceTemplate } from 'fastmcp';
 import { getGodotConnection } from '../utils/godot_connection.js';
 import { z } from 'zod';
+
+type Auth = Record<string, unknown> | undefined;
 
 /**
  * Resource that provides the content of a specific script
  * Note: As a Resource (not ResourceTemplate), it cannot handle dynamic paths
  */
-export const scriptResource: Resource = {
+export const scriptResource = {
     uri: 'godot/script',
     name: 'Godot Script Content',
     mimeType: 'text/plain',
@@ -35,12 +37,12 @@ export const scriptResource: Resource = {
             throw error;
         }
     }
-};
+} as const satisfies Resource<Auth>;
 
 /**
  * Resource that provides a list of all scripts in the project
  */
-export const scriptListResource: Resource = {
+export const scriptListResource = {
   uri: 'godot/scripts',
   name: 'Godot Script List',
   mimeType: 'application/json',
@@ -77,12 +79,12 @@ export const scriptListResource: Resource = {
       throw error;
     }
   }
-};
+} as const satisfies Resource<Auth>;
 
 /**
  * Resource that provides metadata for a specific script, including classes and methods
  */
-export const scriptMetadataResource: Resource = {
+export const scriptMetadataResource = {
     uri: 'godot/script/metadata',
     name: 'Godot Script Metadata',
     mimeType: 'application/json',
@@ -106,4 +108,4 @@ export const scriptMetadataResource: Resource = {
             throw error;
         }
     }
-};
+} as const satisfies Resource<Auth>;

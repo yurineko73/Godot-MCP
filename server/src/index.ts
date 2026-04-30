@@ -3,6 +3,7 @@ import { nodeTools } from './tools/node_tools.js';
 import { scriptTools } from './tools/script_tools.js';
 import { sceneTools } from './tools/scene_tools.js';
 import { editorTools } from './tools/editor_tools.js';
+import { debugTools } from './tools/debug_tools.js';
 import { getGodotConnection } from './utils/godot_connection.js';
 
 // Import resources
@@ -26,11 +27,20 @@ import {
   currentScriptResource 
 } from './resources/editor_resources.js';
 
+// Supress all debug output during startup to keep stdout clean for MCP stdio transport.
+// Any output to stdout or stderr before the transport is ready will corrupt the protocol.
+const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
+const originalConsoleLog = console.log;
+const noop = () => {};
+console.error = noop;
+console.warn = noop;
+console.log = noop;
+
 /**
  * Main entry point for the Godot MCP server
  */
 async function main() {
-  console.error('Starting Godot MCP server...');
 
   // Create FastMCP instance
   const server = new FastMCP({
@@ -39,7 +49,7 @@ async function main() {
   });
 
   // Register all tools
-  [...nodeTools, ...scriptTools, ...sceneTools, ...editorTools].forEach(tool => {
+  [...nodeTools, ...scriptTools, ...sceneTools, ...editorTools, ...debugTools].forEach(tool => {
     server.addTool(tool);
   });
 
@@ -61,17 +71,20 @@ async function main() {
   try {
     const godot = getGodotConnection();
     await godot.connect();
-    console.error('Successfully connected to Godot WebSocket server');
   } catch (error) {
-    const err = error as Error;
-    console.warn(`Could not connect to Godot: ${err.message}`);
-    console.warn('Will retry connection when commands are executed');
+    // Godot not running is expected; tools will reconnect on demand
   }
 
-  // Start the server
-  server.start({
+  // Start the transport BEFORE restoring console output
+  await server.start({
     transportType: 'stdio',
   });
+
+  // Transport is now active - it's safe to restore stderr logging.
+  // stdout must remain MCP-only; stderr can be used for user-facing logs.
+  console.error = originalConsoleError;
+  console.warn = originalConsoleWarn;
+  // console.log remains suppressed to keep stdout clean
 
   console.error('Godot MCP server started');
 
@@ -89,6 +102,6 @@ async function main() {
 
 // Start the server
 main().catch(error => {
-  console.error('Failed to start Godot MCP server:', error);
+  originalConsoleError('Failed to start Godot MCP server:', error);
   process.exit(1);
 });
