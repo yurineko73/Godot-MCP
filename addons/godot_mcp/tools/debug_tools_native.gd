@@ -5,6 +5,9 @@ class_name DebugToolsNative
 extends RefCounted
 
 var _editor_interface: EditorInterface = null
+var _log_buffer: Array[String] = []
+var _max_log_lines: int = 1000
+var _server_core: RefCounted = null
 
 func initialize(editor_interface: EditorInterface) -> void:
 	_editor_interface = editor_interface
@@ -23,17 +26,20 @@ func _get_editor_interface() -> EditorInterface:
 # ============================================================================
 
 func register_tools(server_core: RefCounted) -> void:
-	# 注册get_editor_logs工具
+	_server_core = server_core
+	if server_core.has_signal("log_message"):
+		server_core.log_message.connect(_on_log_message)
+	
 	_register_get_editor_logs(server_core)
-	
-	# 注册execute_script工具
 	_register_execute_script(server_core)
-	
-	# 注册get_performance_metrics工具
 	_register_get_performance_metrics(server_core)
-	
-	# 注册debug_print工具
 	_register_debug_print(server_core)
+
+func _on_log_message(level: String, message: String) -> void:
+	var log_entry: String = "[%s] %s" % [level, message]
+	_log_buffer.append(log_entry)
+	if _log_buffer.size() > _max_log_lines:
+		_log_buffer = _log_buffer.slice(_log_buffer.size() - _max_log_lines)
 
 # ============================================================================
 # get_editor_logs - 获取编辑器日志
@@ -80,27 +86,23 @@ func _register_get_editor_logs(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_get_editor_logs"),
 						  output_schema, annotations)
 
-static func _tool_get_editor_logs(params: Dictionary) -> Dictionary:
-	# 参数提取
+func _tool_get_editor_logs(params: Dictionary) -> Dictionary:
 	var max_lines: int = params.get("max_lines", 100)
 	
-	# 注意：Godot不直接暴露编辑器日志API
-	# 这里返回一个说明，并建议替代方案
+	if _log_buffer.is_empty():
+		return {
+			"logs": [],
+			"count": 0,
+			"note": "No log messages captured yet. Logs are captured from MCP server activity."
+		}
 	
-	var logs: Array[String] = []
-	logs.append("Note: Godot does not expose editor logs via API")
-	logs.append("To capture output:")
-	logs.append("1. Run Godot from command line to see stdout/stderr")
-	logs.append("2. Use print() statements in your scripts")
-	logs.append("3. Check Godot's editor log file (location varies by OS)")
-	
-	# 尝试获取MCP服务器的日志（如果有存储）
-	# 这里可以实现自定义的日志缓存
+	var start_index: int = maxi(0, _log_buffer.size() - max_lines)
+	var logs: Array = _log_buffer.slice(start_index)
 	
 	return {
 		"logs": logs,
 		"count": logs.size(),
-		"note": "Full log capture requires external setup"
+		"total_available": _log_buffer.size()
 	}
 
 # ============================================================================
@@ -150,7 +152,7 @@ func _register_execute_script(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_execute_script"),
 						  output_schema, annotations)
 
-static func _tool_execute_script(params: Dictionary) -> Dictionary:
+func _tool_execute_script(params: Dictionary) -> Dictionary:
 	var code: String = params.get("code", "")
 	var bind_objects: Dictionary = params.get("bind_objects", {})
 	
@@ -160,7 +162,7 @@ static func _tool_execute_script(params: Dictionary) -> Dictionary:
 	var expression: Expression = Expression.new()
 	
 	if not bind_objects.is_empty():
-		print("[MCP Debug] Warning: bind_objects not yet supported in execute_script")
+		printerr("[MCP Debug] Warning: bind_objects not yet supported in execute_script")
 	
 	var parse_error: Error = expression.parse(code, [])
 	
@@ -170,7 +172,8 @@ static func _tool_execute_script(params: Dictionary) -> Dictionary:
 			"error": "Parse failed: " + expression.get_error_text()
 		}
 	
-	var result: Variant = expression.execute([], null, true)
+	var base_instance: RefCounted = self
+	var result: Variant = expression.execute([], base_instance, true)
 	
 	if expression.has_execute_failed():
 		return {
@@ -301,7 +304,7 @@ static func _tool_debug_print(params: Dictionary) -> Dictionary:
 		full_message = "[" + category + "] " + message
 	
 	# 输出到Godot控制台
-	print(full_message)
+	printerr(full_message)
 	
 	return {
 		"status": "success",

@@ -19,6 +19,22 @@ func _get_editor_interface() -> EditorInterface:
 			return plugin.get_editor_interface()
 	return null
 
+func _get_user_scene_root() -> Node:
+	var editor_interface: EditorInterface = _get_editor_interface()
+	if not editor_interface:
+		return null
+	
+	var scene_root: Node = editor_interface.get_edited_scene_root()
+	if scene_root and not scene_root.name.begins_with("@") and scene_root.get_class() != "PanelContainer":
+		return scene_root
+	
+	var open_scenes: Array = editor_interface.get_open_scenes()
+	for scene in open_scenes:
+		if scene and not scene.name.begins_with("@") and scene.get_class() != "PanelContainer":
+			return scene
+	
+	return scene_root
+
 # ============================================================================
 # 工具注册
 # ============================================================================
@@ -80,17 +96,14 @@ func _register_get_editor_state(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_get_editor_state"),
 						  output_schema, annotations)
 
-static func _tool_get_editor_state(params: Dictionary) -> Dictionary:
-	# 获取编辑器接口
-	var editor_interface: EditorInterface = Engine.get_meta("GodotMCPPlugin").get_editor_interface()
+func _tool_get_editor_state(params: Dictionary) -> Dictionary:
+	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	# 获取当前场景信息
-	var scene_root: Node = editor_interface.get_edited_scene_root()
+	var scene_root: Node = _get_user_scene_root()
 	var active_scene: String = scene_root.name if scene_root else ""
 	
-	# 获取选中节点
 	var selected_nodes: Array[String] = []
 	var selection: EditorSelection = editor_interface.get_selection()
 	if selection:
@@ -98,12 +111,7 @@ static func _tool_get_editor_state(params: Dictionary) -> Dictionary:
 		for node in selected:
 			selected_nodes.append(str(node.get_path()))
 	
-	# 获取编辑器模式（简化版本）
-	var editor_mode: String = "editor"  # 默认值
-	
-	# 尝试判断是否在运行模式
-	# 注意：Godot 4.x API可能没有直接获取运行模式的方法
-	# 这里使用启发式判断
+	var editor_mode: String = "editor"
 	
 	return {
 		"active_scene": active_scene,
@@ -153,8 +161,8 @@ func _register_run_project(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_run_project"),
 						  output_schema, annotations)
 
-static func _tool_run_project(params: Dictionary) -> Dictionary:
-	var editor_interface: EditorInterface = Engine.get_meta("GodotMCPPlugin").get_editor_interface()
+func _tool_run_project(params: Dictionary) -> Dictionary:
+	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
@@ -208,13 +216,11 @@ func _register_stop_project(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_stop_project"),
 						  output_schema, annotations)
 
-static func _tool_stop_project(params: Dictionary) -> Dictionary:
-	# 获取编辑器接口
-	var editor_interface: EditorInterface = Engine.get_meta("GodotMCPPlugin").get_editor_interface()
+func _tool_stop_project(params: Dictionary) -> Dictionary:
+	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	# 停止项目
 	editor_interface.stop_playing_scene()
 	
 	return {
@@ -261,13 +267,11 @@ func _register_get_selected_nodes(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_get_selected_nodes"),
 						  output_schema, annotations)
 
-static func _tool_get_selected_nodes(params: Dictionary) -> Dictionary:
-	# 获取编辑器接口
-	var editor_interface: EditorInterface = Engine.get_meta("GodotMCPPlugin").get_editor_interface()
+func _tool_get_selected_nodes(params: Dictionary) -> Dictionary:
+	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	# 获取选中节点
 	var selected_nodes: Array[String] = []
 	var selection: EditorSelection = editor_interface.get_selection()
 	
@@ -298,7 +302,6 @@ func _register_set_editor_setting(server_core: RefCounted) -> void:
 				"description": "Name of the setting (e.g. 'interface/theme/accent_color')"
 			},
 			"setting_value": {
-				"type": ["string", "number", "boolean"],
 				"description": "New value for the setting"
 			}
 		},
@@ -329,39 +332,33 @@ func _register_set_editor_setting(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_set_editor_setting"),
 						  output_schema, annotations)
 
-static func _tool_set_editor_setting(params: Dictionary) -> Dictionary:
-	# 参数提取
+func _tool_set_editor_setting(params: Dictionary) -> Dictionary:
 	var setting_name: String = params.get("setting_name", "")
 	var setting_value: Variant = params.get("setting_value", null)
 	
-	# 参数验证
 	if setting_name.is_empty():
 		return {"error": "Missing required parameter: setting_name"}
 	if setting_value == null:
 		return {"error": "Missing required parameter: setting_value"}
 	
-	# Godot 4.x: 通过EditorInterface获取EditorSettings
-	var editor_interface: EditorInterface = Engine.get_meta("GodotMCPPlugin").get_editor_interface()
+	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	# 获取EditorSettings对象
 	var editor_settings: EditorSettings = editor_interface.get_editor_settings()
 	if not editor_settings:
 		return {"error": "Failed to get EditorSettings"}
 	
-	# 获取旧值
-	var old_value: Variant = editor_settings.get_setting(setting_name)
-	
-	# 设置新值
+	var old_value: Variant = null
+	if editor_settings.has_setting(setting_name):
+		old_value = editor_settings.get_setting(setting_name)
 	editor_settings.set_setting(setting_name, setting_value)
-	
-	# 保存到配置
-	editor_settings.save()
+	if editor_settings.has_method("save"):
+		editor_settings.save()
 	
 	return {
 		"status": "success",
 		"setting_name": setting_name,
-		"old_value": str(old_value),
+		"old_value": str(old_value) if old_value != null else "null",
 		"new_value": str(setting_value)
 	}

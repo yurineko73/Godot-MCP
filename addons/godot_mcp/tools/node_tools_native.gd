@@ -51,6 +51,25 @@ func _register_create_node(server_core: RefCounted) -> void:
 		{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false}
 	)
 
+func _resolve_node_path(node_path: String) -> Node:
+	var scene_root: Node = _get_user_scene_root()
+	if not scene_root:
+		return null
+	
+	if node_path == "/root" or node_path.is_empty():
+		return scene_root
+	
+	var relative: String = node_path.trim_prefix("/root/")
+	var parts: PackedStringArray = relative.split("/")
+	
+	if parts.size() > 0 and parts[0] == scene_root.name:
+		if parts.size() == 1:
+			return scene_root
+		var sub_path: String = "/".join(parts.slice(1))
+		return scene_root.get_node_or_null(sub_path)
+	
+	return scene_root.get_node_or_null(relative)
+
 func _tool_create_node(params: Dictionary) -> Dictionary:
 	var parent_path: String = params.get("parent_path", "")
 	var node_type: String = params.get("node_type", "Node")
@@ -60,10 +79,10 @@ func _tool_create_node(params: Dictionary) -> Dictionary:
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	var parent: Node = editor_interface.get_edited_scene_root()
-	if parent_path != "/root" and not parent_path.is_empty():
-		var relative_path: String = parent_path.trim_prefix("/root/")
-		parent = parent.get_node_or_null(relative_path)
+	var parent: Node = _resolve_node_path(parent_path)
+	if not parent:
+		if parent_path == "/root" or parent_path.is_empty():
+			parent = _get_user_scene_root()
 	
 	if not parent:
 		return {"error": "Parent node not found: " + parent_path}
@@ -75,15 +94,22 @@ func _tool_create_node(params: Dictionary) -> Dictionary:
 	node.name = node_name
 	parent.add_child(node)
 	
-	var scene_root: Node = editor_interface.get_edited_scene_root()
+	var scene_root: Node = _get_user_scene_root()
 	if scene_root:
 		node.owner = scene_root
 	
 	editor_interface.mark_scene_as_unsaved()
 	
+	var friendly_path: String = "/root/" + scene_root.name if scene_root else "/root"
+	var node_friendly: String = str(node.get_path())
+	if scene_root:
+		var root_full: String = str(scene_root.get_path())
+		if node_friendly.begins_with(root_full):
+			node_friendly = "/root/" + scene_root.name + node_friendly.substr(root_full.length())
+	
 	return {
 		"status": "success",
-		"node_path": str(node.get_path()),
+		"node_path": node_friendly,
 		"node_type": node.get_class()
 	}
 
@@ -122,11 +148,7 @@ func _tool_delete_node(params: Dictionary) -> Dictionary:
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	var scene_root: Node = editor_interface.get_edited_scene_root()
-	if not scene_root:
-		return {"error": "No scene is currently open"}
-	
-	var node_to_delete: Node = scene_root.get_node_or_null(node_path.trim_prefix("/root/"))
+	var node_to_delete: Node = _resolve_node_path(node_path)
 	
 	if not node_to_delete:
 		return {"error": "Node not found: " + node_path}
@@ -195,11 +217,7 @@ func _tool_update_node_property(params: Dictionary) -> Dictionary:
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	var scene_root: Node = editor_interface.get_edited_scene_root()
-	if not scene_root:
-		return {"error": "No scene is currently open"}
-	
-	var target_node: Node = scene_root.get_node_or_null(node_path.trim_prefix("/root/"))
+	var target_node: Node = _resolve_node_path(node_path)
 	
 	if not target_node:
 		return {"error": "Node not found: " + node_path}
@@ -208,7 +226,8 @@ func _tool_update_node_property(params: Dictionary) -> Dictionary:
 		return {"error": "Property '" + property_name + "' not found on node " + node_path}
 	
 	var old_value: Variant = target_node.get(property_name)
-	target_node.set(property_name, property_value)
+	var converted_value: Variant = _convert_value_for_property(target_node, property_name, property_value)
+	target_node.set(property_name, converted_value)
 	var new_value: Variant = target_node.get(property_name)
 	
 	editor_interface.mark_scene_as_unsaved()
@@ -257,11 +276,7 @@ func _tool_get_node_properties(params: Dictionary) -> Dictionary:
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	var scene_root: Node = editor_interface.get_edited_scene_root()
-	if not scene_root:
-		return {"error": "No scene is currently open"}
-	
-	var target_node: Node = scene_root.get_node_or_null(node_path.trim_prefix("/root/"))
+	var target_node: Node = _resolve_node_path(node_path)
 	
 	if not target_node:
 		return {"error": "Node not found: " + node_path}
@@ -318,15 +333,16 @@ func _tool_list_nodes(params: Dictionary) -> Dictionary:
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	var scene_root: Node = editor_interface.get_edited_scene_root()
+	var scene_root: Node = _get_user_scene_root()
 	if not scene_root:
 		return {"error": "No scene is currently open"}
 	
-	var start_node: Node = scene_root
+	var start_node: Node = _get_user_scene_root()
+	if not start_node:
+		return {"error": "No scene is currently open"}
 	
 	if not parent_path.is_empty() and parent_path != "/root":
-		var relative_path: String = parent_path.trim_prefix("/root/")
-		start_node = scene_root.get_node_or_null(relative_path)
+		start_node = _resolve_node_path(parent_path)
 		if not start_node:
 			return {"error": "Parent node not found: " + parent_path}
 	
@@ -370,7 +386,7 @@ func _tool_get_scene_tree(params: Dictionary) -> Dictionary:
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	var scene_root: Node = editor_interface.get_edited_scene_root()
+	var scene_root: Node = _get_user_scene_root()
 	if not scene_root:
 		return {"error": "No scene is currently open"}
 	
@@ -392,6 +408,22 @@ func _get_editor_interface() -> EditorInterface:
 			return plugin.get_editor_interface()
 	return null
 
+func _get_user_scene_root() -> Node:
+	var editor_interface: EditorInterface = _get_editor_interface()
+	if not editor_interface:
+		return null
+	
+	var scene_root: Node = editor_interface.get_edited_scene_root()
+	if scene_root and not scene_root.name.begins_with("@") and scene_root.get_class() != "PanelContainer":
+		return scene_root
+	
+	var open_scenes: Array = editor_interface.get_open_scenes()
+	for scene in open_scenes:
+		if scene and not scene.name.begins_with("@") and scene.get_class() != "PanelContainer":
+			return scene
+	
+	return scene_root
+
 static func _collect_nodes(node: Node, path: String, recursive: bool, result: Array[String]) -> void:
 	var node_path: String = path + "/" + node.name
 	result.append(node_path)
@@ -399,6 +431,85 @@ static func _collect_nodes(node: Node, path: String, recursive: bool, result: Ar
 		for child_index in range(node.get_child_count()):
 			var child: Node = node.get_child(child_index)
 			_collect_nodes(child, node_path, recursive, result)
+
+func _convert_value_for_property(node: Node, property_name: String, value: Variant) -> Variant:
+	if value == null:
+		return value
+	
+	var property_type: int = TYPE_NIL
+	for prop in node.get_property_list():
+		if prop["name"] == property_name:
+			property_type = prop["type"]
+			break
+	
+	if property_type == TYPE_NIL:
+		return value
+	
+	match property_type:
+		TYPE_VECTOR2:
+			if value is Dictionary:
+				return Vector2(float(value.get("x", 0.0)), float(value.get("y", 0.0)))
+			if value is String:
+				var parts: PackedStringArray = value.replace("(", "").replace(")", "").replace(" ", "").split(",")
+				if parts.size() >= 2:
+					return Vector2(float(parts[0]), float(parts[1]))
+		TYPE_VECTOR2I:
+			if value is Dictionary:
+				return Vector2i(int(value.get("x", 0)), int(value.get("y", 0)))
+			if value is String:
+				var parts: PackedStringArray = value.replace("(", "").replace(")", "").replace(" ", "").split(",")
+				if parts.size() >= 2:
+					return Vector2i(int(parts[0]), int(parts[1]))
+		TYPE_VECTOR3:
+			if value is Dictionary:
+				return Vector3(float(value.get("x", 0.0)), float(value.get("y", 0.0)), float(value.get("z", 0.0)))
+			if value is String:
+				var parts: PackedStringArray = value.replace("(", "").replace(")", "").replace(" ", "").split(",")
+				if parts.size() >= 3:
+					return Vector3(float(parts[0]), float(parts[1]), float(parts[2]))
+		TYPE_VECTOR3I:
+			if value is Dictionary:
+				return Vector3i(int(value.get("x", 0)), int(value.get("y", 0)), int(value.get("z", 0)))
+			if value is String:
+				var parts: PackedStringArray = value.replace("(", "").replace(")", "").replace(" ", "").split(",")
+				if parts.size() >= 3:
+					return Vector3i(int(parts[0]), int(parts[1]), int(parts[2]))
+		TYPE_COLOR:
+			if value is Dictionary:
+				return Color(float(value.get("r", 0.0)), float(value.get("g", 0.0)), float(value.get("b", 0.0)), float(value.get("a", 1.0)))
+			if value is String:
+				if value.begins_with("#"):
+					return Color(value)
+				return Color(value)
+		TYPE_BOOL:
+			if value is String:
+				return value.to_lower() == "true"
+			if value is int or value is float:
+				return value != 0
+		TYPE_INT:
+			if value is String:
+				return int(value)
+			if value is float:
+				return int(value)
+		TYPE_FLOAT:
+			if value is String:
+				return float(value)
+			if value is int:
+				return float(value)
+		TYPE_RECT2:
+			if value is Dictionary:
+				return Rect2(float(value.get("x", 0.0)), float(value.get("y", 0.0)), float(value.get("w", 0.0)), float(value.get("h", 0.0)))
+		TYPE_TRANSFORM2D:
+			if value is Dictionary:
+				var t: Transform2D = Transform2D()
+				if value.has("rotation"):
+					t = t.rotated(float(value["rotation"]))
+				if value.has("origin"):
+					var origin: Dictionary = value["origin"]
+					t.origin = Vector2(float(origin.get("x", 0.0)), float(origin.get("y", 0.0)))
+				return t
+	
+	return value
 
 static func _serialize_value(value: Variant) -> Variant:
 	if value == null:

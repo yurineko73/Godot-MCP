@@ -20,6 +20,22 @@ func _get_editor_interface() -> EditorInterface:
 			return plugin.get_editor_interface()
 	return null
 
+func _get_user_scene_root() -> Node:
+	var editor_interface: EditorInterface = _get_editor_interface()
+	if not editor_interface:
+		return null
+	
+	var scene_root: Node = editor_interface.get_edited_scene_root()
+	if scene_root and not scene_root.name.begins_with("@") and scene_root.get_class() != "PanelContainer":
+		return scene_root
+	
+	var open_scenes: Array = editor_interface.get_open_scenes()
+	for scene in open_scenes:
+		if scene and not scene.name.begins_with("@") and scene.get_class() != "PanelContainer":
+			return scene
+	
+	return scene_root
+
 # ============================================================================
 # 工具注册
 # ============================================================================
@@ -44,7 +60,7 @@ func register_tools(server_core: RefCounted) -> void:
 	_register_list_project_scenes(server_core)
 
 # ============================================================================
-# create_scene - 创建新场景
+# create_scene - 创建新场�?
 # ============================================================================
 
 func _register_create_scene(server_core: RefCounted) -> void:
@@ -100,7 +116,7 @@ static func _tool_create_scene(params: Dictionary) -> Dictionary:
 	if scene_path.is_empty():
 		return {"error": "Missing required parameter: scene_path"}
 	
-	# 使用PathValidator验证路径安全性
+	# 使用PathValidator验证路径安全�?
 	var validation: Dictionary = PathValidator.validate_file_path(scene_path, [".tscn"])
 	if not validation["valid"]:
 		return {"error": "Invalid path: " + validation["error"]}
@@ -112,14 +128,14 @@ static func _tool_create_scene(params: Dictionary) -> Dictionary:
 	if not ClassDB.class_exists(root_node_type):
 		return {"error": "Invalid node type: " + root_node_type}
 	
-	# 创建根节点
+	# 创建根节�?
 	var root_node: Node = ClassDB.instantiate(root_node_type)
 	root_node.name = scene_path.get_file().get_basename()
 	
 	# 创建PackedScene
 	var packed_scene: PackedScene = PackedScene.new()
 	
-	# 设置owner并打包
+	# 设置owner并打�?
 	root_node.owner = root_node  # 临时设置
 	packed_scene.pack(root_node)
 	
@@ -127,7 +143,7 @@ static func _tool_create_scene(params: Dictionary) -> Dictionary:
 	var error: Error = ResourceSaver.save(packed_scene, scene_path)
 	
 	# 清理
-	root_node.queue_free()
+	root_node.free()
 	
 	if error != OK:
 		return {"error": "Failed to save scene: " + error_string(error)}
@@ -179,14 +195,13 @@ func _register_save_scene(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_save_scene"),
 						  output_schema, annotations)
 
-static func _tool_save_scene(params: Dictionary) -> Dictionary:
-	# 获取编辑器接口
-	var editor_interface: EditorInterface = Engine.get_meta("GodotMCPPlugin").get_editor_interface()
+func _tool_save_scene(params: Dictionary) -> Dictionary:
+	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	# 获取当前场景根节点
-	var scene_root: Node = editor_interface.get_edited_scene_root()
+	# 获取当前场景根节�?
+	var scene_root: Node = _get_user_scene_root()
 	if not scene_root:
 		return {"error": "No scene is currently open"}
 	
@@ -194,13 +209,13 @@ static func _tool_save_scene(params: Dictionary) -> Dictionary:
 	var file_path: String = params.get("file_path", "")
 	
 	if file_path.is_empty():
-		# 使用当前场景的路径
+		# 使用当前场景的路�?
 		var current_scene_path: String = scene_root.scene_file_path
 		if current_scene_path.is_empty():
 			return {"error": "Scene has no file path. Please provide a file_path parameter."}
 		file_path = current_scene_path
 	
-	# 使用PathValidator验证路径安全性
+	# 使用PathValidator验证路径安全�?
 	var validation: Dictionary = PathValidator.validate_file_path(file_path, [".tscn"])
 	if not validation["valid"]:
 		return {"error": "Invalid path: " + validation["error"]}
@@ -208,7 +223,7 @@ static func _tool_save_scene(params: Dictionary) -> Dictionary:
 	# 使用清理后的路径
 	file_path = validation["sanitized"]
 	
-	# 创建PackedScene并打包
+	# 创建PackedScene并打�?
 	var packed_scene: PackedScene = PackedScene.new()
 	var error: Error = packed_scene.pack(scene_root)
 	
@@ -259,7 +274,7 @@ func _register_open_scene(server_core: RefCounted) -> void:
 	# annotations
 	var annotations: Dictionary = {
 		"readOnlyHint": false,
-		"destructiveHint": true,  # 会关闭当前场景
+		"destructiveHint": true,  # 会关闭当前场�?
 		"idempotentHint": false,
 		"openWorldHint": false
 	}
@@ -269,28 +284,22 @@ func _register_open_scene(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_open_scene"),
 						  output_schema, annotations)
 
-static func _tool_open_scene(params: Dictionary) -> Dictionary:
-	# 参数提取
+func _tool_open_scene(params: Dictionary) -> Dictionary:
 	var scene_path: String = params.get("scene_path", "")
 	
-	# 参数验证
 	if scene_path.is_empty():
 		return {"error": "Missing required parameter: scene_path"}
 	
-	# 使用PathValidator验证路径安全性
 	var validation: Dictionary = PathValidator.validate_file_path(scene_path, [".tscn"])
 	if not validation["valid"]:
 		return {"error": "Invalid path: " + validation["error"]}
 	
-	# 使用清理后的路径
 	scene_path = validation["sanitized"]
 	
-	# 验证文件是否存在
 	if not FileAccess.file_exists(scene_path):
 		return {"error": "Scene file not found: " + scene_path}
 	
-	# 获取编辑器接口
-	var editor_interface: EditorInterface = Engine.get_meta("GodotMCPPlugin").get_editor_interface()
+	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
@@ -298,12 +307,12 @@ static func _tool_open_scene(params: Dictionary) -> Dictionary:
 	editor_interface.open_scene_from_path(scene_path)
 	
 	# 验证场景是否成功打开
-	var opened_scene_root: Node = editor_interface.get_edited_scene_root()
+	var opened_scene_root: Node = _get_user_scene_root()
 	if not opened_scene_root:
 		return {"error": "Failed to open scene: " + scene_path}
 	
-	# 获取打开的场景信息
-	var scene_root: Node = editor_interface.get_edited_scene_root()
+	# 获取打开的场景信�?
+	var scene_root: Node = _get_user_scene_root()
 	var root_type: String = scene_root.get_class() if scene_root else "Unknown"
 	
 	return {
@@ -351,14 +360,13 @@ func _register_get_current_scene(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_get_current_scene"),
 						  output_schema, annotations)
 
-static func _tool_get_current_scene(params: Dictionary) -> Dictionary:
-	# 获取编辑器接口
-	var editor_interface: EditorInterface = Engine.get_meta("GodotMCPPlugin").get_editor_interface()
+func _tool_get_current_scene(params: Dictionary) -> Dictionary:
+	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	# 获取当前场景根节点
-	var scene_root: Node = editor_interface.get_edited_scene_root()
+	# 获取当前场景根节�?
+	var scene_root: Node = _get_user_scene_root()
 	
 	if not scene_root:
 		return {"error": "No scene is currently open"}
@@ -369,9 +377,9 @@ static func _tool_get_current_scene(params: Dictionary) -> Dictionary:
 	var root_node_type: String = scene_root.get_class()
 	var node_count: int = _count_nodes(scene_root)
 	
-	# 检查场景是否已修改（通过检查是否有unsaved changes）
+	# 检查场景是否已修改（通过检查是否有unsaved changes�?
 	# 注意：Godot API没有直接获取此状态的方法，这里使用启发式判断
-	var is_modified: bool = false  # 简化处理，实际应该检查EditorInterface的内部状态
+	var is_modified: bool = false  # 简化处理，实际应该检查EditorInterface的内部状�?
 	
 	return {
 		"scene_name": scene_name,
@@ -382,7 +390,7 @@ static func _tool_get_current_scene(params: Dictionary) -> Dictionary:
 	}
 
 # ============================================================================
-# get_scene_structure - 获取场景树结构
+# get_scene_structure - 获取场景树结�?
 # ============================================================================
 
 func _register_get_scene_structure(server_core: RefCounted) -> void:
@@ -423,17 +431,15 @@ func _register_get_scene_structure(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_get_scene_structure"),
 						  output_schema, annotations)
 
-static func _tool_get_scene_structure(params: Dictionary) -> Dictionary:
-	# 参数提取
+func _tool_get_scene_structure(params: Dictionary) -> Dictionary:
 	var max_depth: int = params.get("max_depth", -1)
 	
-	# 获取编辑器接口
-	var editor_interface: EditorInterface = Engine.get_meta("GodotMCPPlugin").get_editor_interface()
+	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	# 获取场景根节点
-	var scene_root: Node = editor_interface.get_edited_scene_root()
+	# 获取场景根节�?
+	var scene_root: Node = _get_user_scene_root()
 	if not scene_root:
 		return {"error": "No scene is currently open"}
 	
@@ -446,7 +452,7 @@ static func _tool_get_scene_structure(params: Dictionary) -> Dictionary:
 	
 	return scene_structure
 
-# 辅助函数：递归构建节点树
+# 辅助函数：递归构建节点�?
 static func _build_node_tree(node: Node, current_depth: int, max_depth: int) -> Dictionary:
 	var node_info: Dictionary = {
 		"name": node.name,
@@ -455,12 +461,12 @@ static func _build_node_tree(node: Node, current_depth: int, max_depth: int) -> 
 		"children": []
 	}
 	
-	# 检查是否达到最大深度
+	# 检查是否达到最大深�?
 	if max_depth >= 0 and current_depth >= max_depth:
 		node_info["children_truncated"] = true
 		return node_info
 	
-	# 递归处理子节点
+	# 递归处理子节�?
 	for child_index in range(node.get_child_count()):
 		var child: Node = node.get_child(child_index)
 		var child_tree: Dictionary = _build_node_tree(child, current_depth + 1, max_depth)
@@ -479,7 +485,7 @@ static func _count_nodes(node: Node) -> int:
 	return count
 
 # ============================================================================
-# list_project_scenes - 列出项目中的所有场景
+# list_project_scenes - 列出项目中的所有场�?
 # ============================================================================
 
 func _register_list_project_scenes(server_core: RefCounted) -> void:
@@ -527,7 +533,7 @@ static func _tool_list_project_scenes(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var search_path: String = params.get("search_path", "res://")
 	
-	# 使用PathValidator验证路径安全性
+	# 使用PathValidator验证路径安全�?
 	var validation: Dictionary = PathValidator.validate_directory_path(search_path)
 	if not validation["valid"]:
 		return {"error": "Invalid path: " + validation["error"]}
@@ -535,10 +541,10 @@ static func _tool_list_project_scenes(params: Dictionary) -> Dictionary:
 	# 使用清理后的路径
 	search_path = validation["sanitized"]
 	
-	# 转换为文件系统路径
+	# 转换为文件系统路�?
 	var fs_path: String = search_path
 	
-	# 使用DirAccess递归查找所有.tscn文件
+	# 使用DirAccess递归查找所�?tscn文件
 	var scenes: Array[String] = []
 	_collect_scenes(fs_path, scenes)
 	
@@ -564,10 +570,13 @@ static func _collect_scenes(directory_path: String, result: Array[String]) -> vo
 	while not file_name.is_empty():
 		# 跳过特殊目录
 		if file_name != "." and file_name != "..":
-			var full_path: String = directory_path + "/" + file_name
+			var full_path: String = directory_path
+			if not full_path.ends_with("/"):
+				full_path += "/"
+			full_path += file_name
 			
 			if dir.current_is_dir():
-				# 递归处理子目录
+				# 递归处理子目�?
 				_collect_scenes(full_path, result)
 			elif file_name.ends_with(".tscn"):
 				# 添加场景文件

@@ -257,7 +257,14 @@ func _handle_tool_call(message: Dictionary) -> Dictionary:
 	# 检查工具是否存在
 	if not _tools.has(tool_name):
 		_log_error("Tool not found: " + tool_name)
-		return MCPTypes.create_error_response(id, MCPTypes.ERROR_TOOL_NOT_FOUND, "Tool not found: " + tool_name)
+		var error_result: Dictionary = {
+			"content": [{
+				"type": "text",
+				"text": "Tool not found: " + tool_name
+			}],
+			"isError": true
+		}
+		return MCPTypes.create_response(id, error_result)
 	
 	var tool: MCPTypes.MCPTool = _tools[tool_name]
 	
@@ -282,17 +289,27 @@ func _handle_tool_call(message: Dictionary) -> Dictionary:
 	if not error.is_empty():
 		_log_error("Tool execution failed: " + tool_name + " - " + error)
 		tool_execution_failed.emit(tool_name, error)
-		return MCPTypes.create_error_response(id, MCPTypes.ERROR_EXECUTION_FAILED, error)
+		var error_result: Dictionary = {
+			"content": [{
+				"type": "text",
+				"text": error
+			}],
+			"isError": true
+		}
+		return MCPTypes.create_response(id, error_result)
 	
 	# 构建成功响应
 	var response_result: Dictionary = {
 		"content": [{
 			"type": "text",
 			"text": JSON.stringify(result)
-		}]
+		}],
+		"isError": false
 	}
 	
 	var response: Dictionary = MCPTypes.create_response(id, response_result)
+	
+	_append_tool_log(tool_name, result, error)
 	
 	# 发送完成信号
 	tool_execution_completed.emit(tool_name, result)
@@ -586,16 +603,23 @@ func _process_next_message() -> void:
 func _send_response(response: Dictionary) -> void:
 	var json_string: String = JSON.stringify(response)
 	
-	# 调试：输出响应到stderr，方便调试
 	printerr("[MCP Server] Sending response: " + json_string)
 	
-	# 同时写入文件，方便检查
 	var file = FileAccess.open("user://mcp_last_response.json", FileAccess.WRITE)
 	if file:
 		file.store_string(json_string)
 		file.close()
 	
-	# 使用prints()输出到stdout（prints会确保立即输出）
+	var log_file: FileAccess = FileAccess.open("user://mcp_all_responses.log", FileAccess.READ)
+	var existing: String = ""
+	if log_file:
+		existing = log_file.get_as_text()
+		log_file.close()
+	log_file = FileAccess.open("user://mcp_all_responses.log", FileAccess.WRITE)
+	if log_file:
+		log_file.store_string(existing + json_string + "\n---SEPARATOR---\n")
+		log_file.close()
+	
 	print(json_string)
 	response_sent.emit(response)
 
@@ -712,3 +736,66 @@ func _log_debug(message: String) -> void:
 
 func cleanup() -> void:
 	stop()
+
+# ============================================================================
+# 工具调用日志（用于批量验证）
+# ============================================================================
+
+var _tool_log_path: String = "user://mcp_tool_verification_log.json"
+
+func clear_tool_log() -> void:
+	var file: FileAccess = FileAccess.open(_tool_log_path, FileAccess.WRITE)
+	if file:
+		file.store_string("[]")
+		file.close()
+
+func _append_tool_log(tool_name: String, result: Variant, error: String) -> void:
+	var log_entry: Dictionary = {
+		"tool": tool_name,
+		"timestamp": Time.get_unix_time_from_system(),
+		"error": error,
+		"result_type": str(typeof(result))
+	}
+	if result is Dictionary:
+		if result.has("error"):
+			log_entry["status"] = "error"
+			log_entry["error_detail"] = str(result["error"])
+		elif result.has("status"):
+			log_entry["status"] = str(result["status"])
+		else:
+			log_entry["status"] = "ok"
+		var result_keys: Array = result.keys()
+		log_entry["result_keys"] = result_keys
+		for key in result_keys:
+			var val: Variant = result[key]
+			if val is Array:
+				log_entry["result_" + key + "_count"] = val.size()
+			elif val is Dictionary:
+				log_entry["result_" + key + "_keys"] = val.keys()
+			else:
+				var val_str: String = str(val)
+				if val_str.length() > 200:
+					val_str = val_str.substr(0, 200)
+				log_entry["result_" + key] = val_str
+	else:
+		log_entry["status"] = "ok"
+		var preview: String = str(result)
+		if preview.length() > 200:
+			preview = preview.substr(0, 200)
+		log_entry["result_preview"] = preview
+	
+	var existing: Array = []
+	if FileAccess.file_exists(_tool_log_path):
+		var file: FileAccess = FileAccess.open(_tool_log_path, FileAccess.READ)
+		if file:
+			var json: JSON = JSON.new()
+			if json.parse(file.get_as_text()) == OK:
+				existing = json.get_data()
+			file.close()
+	
+	existing.append(log_entry)
+	
+	var file: FileAccess = FileAccess.open(_tool_log_path, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(existing, "\t"))
+		file.close()

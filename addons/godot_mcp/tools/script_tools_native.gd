@@ -122,7 +122,10 @@ static func _collect_scripts(directory_path: String, result: Array) -> void:
 	while not file_name.is_empty():
 		# 跳过特殊目录
 		if file_name != "." and file_name != "..":
-			var full_path: String = directory_path + "/" + file_name
+			var full_path: String = directory_path
+			if not full_path.ends_with("/"):
+				full_path += "/"
+			full_path += file_name
 			
 			if dir.current_is_dir():
 				# 递归处理子目录

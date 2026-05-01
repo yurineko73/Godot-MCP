@@ -1,7 +1,7 @@
-[gd_scene load_steps=2 format=3 uid="uid://mcp_panel_native"]
+[gd_scene format=3 uid="uid://dlwtgii3pf6wd"]
 
-[ext_resource type="Script" path="res://addons/godot_mcp/ui/mcp_panel_native.gd" id="1"]
+[ext_resource type="Script" uid="uid://cjveyo87qjyax" path="res://addons/godot_mcp/ui/mcp_panel_native.gd" id="1"]
 
-[node name="MCPPanelNative" type="PanelContainer"]
+[node name="MCPPanelNative" type="PanelContainer" unique_id=180844499]
 custom_minimum_size = Vector2(200, 100)
 script = ExtResource("1")

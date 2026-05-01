@@ -17,9 +17,7 @@ const ALLOWED_PATHS := ["res://", "user://"]
 
 # 常量 - 危险路径模式
 const DANGEROUS_PATTERNS := [
-	"..",           # 路径遍历
 	"~",            # 用户目录
-	"//",           # 网络路径
 	"\\\\",         # Windows网络路径
 	"C:\\",         # Windows绝对路径
 	"/etc/",        # Linux系统目录
@@ -66,9 +64,17 @@ static func validate_path(path: String, strict: bool = true) -> Dictionary:
 	
 	if strict:
 		for pattern in DANGEROUS_PATTERNS:
-			if path.contains(pattern):
+			if sanitized.contains(pattern):
 				result["error"] = "Path contains dangerous pattern: " + pattern
 				return result
+		var path_part: String = sanitized
+		for prefix in ALLOWED_PATHS:
+			if path_part.begins_with(prefix):
+				path_part = path_part.substr(prefix.length())
+				break
+		if path_part.contains(".."):
+			result["error"] = "Path contains directory traversal: .."
+			return result
 	
 	result["valid"] = true
 	result["sanitized"] = sanitized
@@ -105,7 +111,13 @@ static func validate_directory_path(path: String) -> Dictionary:
 		return result
 	
 	var sanitized: String = result["sanitized"]
-	if not sanitized.ends_with("/"):
+	var path_without_prefix: String = sanitized
+	for allowed in ALLOWED_PATHS:
+		if path_without_prefix.begins_with(allowed):
+			path_without_prefix = path_without_prefix.substr(allowed.length())
+			break
+	
+	if not path_without_prefix.is_empty() and not path_without_prefix.ends_with("/"):
 		sanitized += "/"
 		result["sanitized"] = sanitized
 	
@@ -119,18 +131,28 @@ static func validate_directory_path(path: String) -> Dictionary:
 static func _sanitize_path(path: String) -> String:
 	var sanitized: String = path
 	
+	var prefix: String = ""
+	for allowed in ALLOWED_PATHS:
+		if sanitized.begins_with(allowed):
+			prefix = allowed
+			sanitized = sanitized.substr(allowed.length())
+			break
+	
 	sanitized = sanitized.replace("..", "")
 	
 	while sanitized.contains("//"):
 		sanitized = sanitized.replace("//", "/")
 	
-	if not sanitized.begins_with("res://") and not sanitized.begins_with("user://"):
-		if sanitized.begins_with("/"):
-			sanitized = "res://" + sanitized.lstrip("/")
-		else:
-			sanitized = "res://" + sanitized
+	if sanitized.begins_with("/"):
+		sanitized = sanitized.lstrip("/")
 	
-	return sanitized
+	if prefix.is_empty():
+		if path.begins_with("/"):
+			prefix = "res://"
+		else:
+			prefix = "res://"
+	
+	return prefix + sanitized
 
 # ===========================================
 # 批量验证

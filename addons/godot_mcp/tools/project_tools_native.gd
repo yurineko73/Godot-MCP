@@ -75,14 +75,17 @@ func _register_get_project_info(server_core: RefCounted) -> void:
 						  output_schema, annotations)
 
 static func _tool_get_project_info(params: Dictionary) -> Dictionary:
-	# 使用ProjectSettings单例获取项目信息
 	var project_name: String = ProjectSettings.get_setting("application/config/name", "")
 	var project_version: String = ProjectSettings.get_setting("application/config/version", "")
 	var project_description: String = ProjectSettings.get_setting("application/config/description", "")
-	var main_scene: String = ProjectSettings.get_setting("application/run/main_scene", "")
+	var main_scene_uid: String = ProjectSettings.get_setting("application/run/main_scene", "")
 	
-	# 获取项目路径
-	var project_path: String = OS.get_executable_path().get_base_dir()
+	var main_scene: String = main_scene_uid
+	if main_scene_uid.begins_with("uid://"):
+		if ClassDB.class_exists("ResourceUID"):
+			main_scene = ResourceUID.uid_to_path(main_scene_uid)
+	
+	var project_path: String = ProjectSettings.globalize_path("res://")
 	
 	return {
 		"project_name": project_name,
@@ -265,7 +268,10 @@ static func _collect_resources(directory_path: String, extensions: Array[String]
 	while not file_name.is_empty():
 		# 跳过特殊目录
 		if file_name != "." and file_name != "..":
-			var full_path: String = directory_path + "/" + file_name
+			var full_path: String = directory_path
+			if not full_path.ends_with("/"):
+				full_path += "/"
+			full_path += file_name
 			
 			if dir.current_is_dir():
 				# 递归处理子目录
