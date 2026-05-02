@@ -6,6 +6,7 @@ A comprehensive integration between Godot Engine and AI assistants using the Mod
 
 - **Full Godot Project Access**: AI assistants can access and modify scripts, scenes, nodes, and project resources
 - **Two-way Communication**: Send project data to AI and apply suggested changes directly in the editor
+- **Dual Transport Support**: Choose between stdio (default) or HTTP transport for flexible deployment
 - **Command Categories**:
   - **Node Commands**: Create, modify, and manage nodes in your scenes
   - **Script Commands**: Edit, analyze, and create GDScript files
@@ -13,7 +14,83 @@ A comprehensive integration between Godot Engine and AI assistants using the Mod
   - **Project Commands**: Access project settings and resources
   - **Editor Commands**: Control various editor functionality
 
-## Quick Setup
+## Transport Modes
+
+Godot-MCP supports two transport modes for different use cases:
+
+### stdio Mode (Default)
+
+Best for: Local development and testing
+
+**Starting the server**:
+1. Open your Godot project
+2. Go to **Project > Project Settings > Plugins**
+3. Enable "Godot Native MCP Server" plugin
+4. In plugin settings, set `transport_mode = "stdio"`
+5. Click "Start Server" or enable `auto_start`
+
+**Claude Desktop configuration** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "godot-mcp": {
+      "command": "path/to/godot.exe",
+      "args": ["--headless", "--script", "res://addons/godot_mcp/mcp_server_native.gd"]
+    }
+  }
+}
+```
+
+> **Note**: Replace `path/to/godot.exe` with the actual path to your Godot executable.
+
+### HTTP Mode (Recommended for production)
+
+Best for: Production deployment and remote access
+
+**Starting the server**:
+1. Open your Godot project
+2. Go to **Project > Project Settings > Plugins**
+3. Enable "Godot Native MCP Server" plugin
+4. In plugin settings, set `transport_mode = "http"`
+5. Set `http_port` (default: 9080)
+6. (Optional) Enable `auth_enabled` and set `auth_token` for security
+7. Click "Start Server"
+
+**Claude Desktop configuration (no auth)**:
+```json
+{
+  "mcpServers": {
+    "godot-mcp": {
+      "url": "http://localhost:9080/mcp"
+    }
+  }
+}
+```
+
+**Claude Desktop configuration (with auth)**:
+```json
+{
+  "mcpServers": {
+    "godot-mcp": {
+      "url": "http://localhost:9080/mcp",
+      "headers": {
+        "Authorization": "Bearer your-secret-token-here"
+      }
+    }
+  }
+}
+```
+
+### Security Recommendations
+
+- ✅ **Production**: Always enable authentication (`auth_enabled = true`)
+- ✅ **Token**: Use a strong token (≥16 characters, mix of letters, numbers, special characters)
+- ✅ **Storage**: Don't commit tokens to version control (use environment variables or config files)
+- ⚠️ **Remote access**: If allowing remote access, use HTTPS (TLS/SSL)
+
+For detailed configuration examples, see:
+- `docs/configuration/mcp-stdio-config-example.json`
+- `docs/configuration/mcp-http-config-example.json`
 
 ### 1. Clone the Repository
 

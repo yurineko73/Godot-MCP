@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "godot-mcp-stdio": {
+      "command": "path/to/godot.exe",
+      "args": [
+        "--headless",
+        "--script",
+        "res://addons/godot_mcp/mcp_server_native.gd"
+      ],
+      "env": {
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

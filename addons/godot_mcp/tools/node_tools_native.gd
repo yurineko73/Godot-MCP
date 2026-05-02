@@ -226,7 +226,12 @@ func _tool_update_node_property(params: Dictionary) -> Dictionary:
 		return {"error": "Property '" + property_name + "' not found on node " + node_path}
 	
 	var old_value: Variant = target_node.get(property_name)
-	var converted_value: Variant = _convert_value_for_property(target_node, property_name, property_value)
+	var actual_value: Variant = property_value
+	if property_value is String:
+		var parsed: Variant = JSON.parse_string(property_value)
+		if parsed != null:
+			actual_value = parsed
+	var converted_value: Variant = _convert_value_for_property(target_node, property_name, actual_value)
 	target_node.set(property_name, converted_value)
 	var new_value: Variant = target_node.get(property_name)
 	
@@ -288,6 +293,9 @@ func _tool_get_node_properties(params: Dictionary) -> Dictionary:
 		var prop_name: String = property_dict.get("name", "")
 		if prop_name.begins_with("__"):
 			continue
+		var usage_flags: int = property_dict.get("usage", 0)
+		if usage_flags & 128 or usage_flags & 64 or usage_flags & 256:
+			continue
 		var value = target_node.get(prop_name)
 		properties[prop_name] = _serialize_value(value)
 	
@@ -347,7 +355,7 @@ func _tool_list_nodes(params: Dictionary) -> Dictionary:
 			return {"error": "Parent node not found: " + parent_path}
 	
 	var nodes_list: Array[String] = []
-	_collect_nodes(start_node, "", recursive, nodes_list)
+	_collect_nodes(start_node, "", recursive, nodes_list, scene_root)
 	
 	return {
 		"nodes": nodes_list,
@@ -390,7 +398,7 @@ func _tool_get_scene_tree(params: Dictionary) -> Dictionary:
 	if not scene_root:
 		return {"error": "No scene is currently open"}
 	
-	var tree: Dictionary = _build_scene_tree_node(scene_root, 0, max_depth)
+	var tree: Dictionary = _build_scene_tree_node(scene_root, 0, max_depth, scene_root)
 	var total_nodes: int = _count_all_nodes(scene_root)
 	
 	return {
@@ -424,13 +432,24 @@ func _get_user_scene_root() -> Node:
 	
 	return scene_root
 
-static func _collect_nodes(node: Node, path: String, recursive: bool, result: Array[String]) -> void:
-	var node_path: String = path + "/" + node.name
+static func _make_friendly_path(node: Node, scene_root: Node) -> String:
+	if not scene_root:
+		return str(node.get_path())
+	if node == scene_root:
+		return "/root/" + scene_root.name
+	var node_path: String = str(node.get_path())
+	var root_path: String = str(scene_root.get_path())
+	if node_path.begins_with(root_path + "/"):
+		return "/root/" + scene_root.name + node_path.substr(root_path.length())
+	return node_path
+
+static func _collect_nodes(node: Node, path: String, recursive: bool, result: Array[String], scene_root: Node = null) -> void:
+	var node_path: String = _make_friendly_path(node, scene_root)
 	result.append(node_path)
 	if recursive:
 		for child_index in range(node.get_child_count()):
 			var child: Node = node.get_child(child_index)
-			_collect_nodes(child, node_path, recursive, result)
+			_collect_nodes(child, node_path, recursive, result, scene_root)
 
 func _convert_value_for_property(node: Node, property_name: String, value: Variant) -> Variant:
 	if value == null:
@@ -538,11 +557,11 @@ static func _serialize_value(value: Variant) -> Variant:
 		_:
 			return str(value)
 
-static func _build_scene_tree_node(node: Node, current_depth: int, max_depth: int) -> Dictionary:
+static func _build_scene_tree_node(node: Node, current_depth: int, max_depth: int, scene_root: Node = null) -> Dictionary:
 	var node_info: Dictionary = {
 		"name": node.name,
 		"type": node.get_class(),
-		"path": str(node.get_path()),
+		"path": _make_friendly_path(node, scene_root),
 		"child_count": node.get_child_count()
 	}
 	
@@ -563,7 +582,7 @@ static func _build_scene_tree_node(node: Node, current_depth: int, max_depth: in
 		var children: Array[Dictionary] = []
 		for child_index in range(node.get_child_count()):
 			var child: Node = node.get_child(child_index)
-			var child_info: Dictionary = _build_scene_tree_node(child, current_depth + 1, max_depth)
+			var child_info: Dictionary = _build_scene_tree_node(child, current_depth + 1, max_depth, scene_root)
 			children.append(child_info)
 		node_info["children"] = children
 	

@@ -6,6 +6,7 @@ class_name EditorToolsNative
 extends RefCounted
 
 var _editor_interface: EditorInterface = null
+var _editor_operation_in_progress: bool = false
 
 func initialize(editor_interface: EditorInterface) -> void:
 	_editor_interface = editor_interface
@@ -34,6 +35,17 @@ func _get_user_scene_root() -> Node:
 			return scene
 	
 	return scene_root
+
+static func _make_friendly_path(node: Node, scene_root: Node) -> String:
+	if not scene_root:
+		return str(node.get_path())
+	if node == scene_root:
+		return "/root/" + scene_root.name
+	var node_path: String = str(node.get_path())
+	var root_path: String = str(scene_root.get_path())
+	if node_path.begins_with(root_path + "/"):
+		return "/root/" + scene_root.name + node_path.substr(root_path.length())
+	return node_path
 
 # ============================================================================
 # 工具注册
@@ -109,7 +121,7 @@ func _tool_get_editor_state(params: Dictionary) -> Dictionary:
 	if selection:
 		var selected: Array[Node] = selection.get_selected_nodes()
 		for node in selected:
-			selected_nodes.append(str(node.get_path()))
+			selected_nodes.append(_make_friendly_path(node, scene_root))
 	
 	var editor_mode: String = "editor"
 	
@@ -162,18 +174,26 @@ func _register_run_project(server_core: RefCounted) -> void:
 						  output_schema, annotations)
 
 func _tool_run_project(params: Dictionary) -> Dictionary:
+	if _editor_operation_in_progress:
+		return {"error": "Editor operation in progress, please retry"}
+	_editor_operation_in_progress = true
+	
 	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
+		_editor_operation_in_progress = false
 		return {"error": "Editor interface not available"}
 	
 	var scene_path: String = params.get("scene_path", "")
 	
 	if not scene_path.is_empty():
 		if not FileAccess.file_exists(scene_path):
+			_editor_operation_in_progress = false
 			return {"error": "Scene file not found: " + scene_path}
 		editor_interface.play_custom_scene(scene_path)
 	else:
 		editor_interface.play_current_scene()
+	
+	_editor_operation_in_progress = false
 	
 	return {
 		"status": "success",
@@ -217,11 +237,18 @@ func _register_stop_project(server_core: RefCounted) -> void:
 						  output_schema, annotations)
 
 func _tool_stop_project(params: Dictionary) -> Dictionary:
+	if _editor_operation_in_progress:
+		return {"error": "Editor operation in progress, please retry"}
+	_editor_operation_in_progress = true
+	
 	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
+		_editor_operation_in_progress = false
 		return {"error": "Editor interface not available"}
 	
 	editor_interface.stop_playing_scene()
+	
+	_editor_operation_in_progress = false
 	
 	return {
 		"status": "success",
@@ -274,11 +301,12 @@ func _tool_get_selected_nodes(params: Dictionary) -> Dictionary:
 	
 	var selected_nodes: Array[String] = []
 	var selection: EditorSelection = editor_interface.get_selection()
+	var scene_root: Node = _get_user_scene_root()
 	
 	if selection:
 		var selected: Array[Node] = selection.get_selected_nodes()
 		for node in selected:
-			selected_nodes.append(str(node.get_path()))
+			selected_nodes.append(_make_friendly_path(node, scene_root))
 	
 	return {
 		"selected_nodes": selected_nodes,

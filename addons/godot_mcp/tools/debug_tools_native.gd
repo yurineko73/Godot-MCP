@@ -8,6 +8,8 @@ var _editor_interface: EditorInterface = null
 var _log_buffer: Array[String] = []
 var _max_log_lines: int = 1000
 var _server_core: RefCounted = null
+var _log_mutex: Mutex = Mutex.new()
+var _execution_mutex: Mutex = Mutex.new()
 
 func initialize(editor_interface: EditorInterface) -> void:
 	_editor_interface = editor_interface
@@ -37,9 +39,11 @@ func register_tools(server_core: RefCounted) -> void:
 
 func _on_log_message(level: String, message: String) -> void:
 	var log_entry: String = "[%s] %s" % [level, message]
+	_log_mutex.lock()
 	_log_buffer.append(log_entry)
 	if _log_buffer.size() > _max_log_lines:
 		_log_buffer = _log_buffer.slice(_log_buffer.size() - _max_log_lines)
+	_log_mutex.unlock()
 
 # ============================================================================
 # get_editor_logs - 获取编辑器日志
@@ -89,7 +93,9 @@ func _register_get_editor_logs(server_core: RefCounted) -> void:
 func _tool_get_editor_logs(params: Dictionary) -> Dictionary:
 	var max_lines: int = params.get("max_lines", 100)
 	
+	_log_mutex.lock()
 	if _log_buffer.is_empty():
+		_log_mutex.unlock()
 		return {
 			"logs": [],
 			"count": 0,
@@ -98,6 +104,7 @@ func _tool_get_editor_logs(params: Dictionary) -> Dictionary:
 	
 	var start_index: int = maxi(0, _log_buffer.size() - max_lines)
 	var logs: Array = _log_buffer.slice(start_index)
+	_log_mutex.unlock()
 	
 	return {
 		"logs": logs,
@@ -160,20 +167,43 @@ func _tool_execute_script(params: Dictionary) -> Dictionary:
 		return {"error": "Missing required parameter: code"}
 	
 	var expression: Expression = Expression.new()
-	
+
+	var bind_names: PackedStringArray = []
+	var bind_values: Array = []
+	var singletons: Dictionary = {
+		"OS": OS,
+		"Engine": Engine,
+		"ProjectSettings": ProjectSettings,
+		"Input": Input,
+		"Time": Time,
+		"JSON": JSON,
+		"ClassDB": ClassDB,
+		"Performance": Performance,
+		"ResourceLoader": ResourceLoader,
+		"ResourceSaver": ResourceSaver,
+		"EditorInterface": EditorInterface,
+	}
+	for singleton_name in singletons:
+		bind_names.append(singleton_name)
+		bind_values.append(singletons[singleton_name])
+
 	if not bind_objects.is_empty():
-		printerr("[MCP Debug] Warning: bind_objects not yet supported in execute_script")
-	
-	var parse_error: Error = expression.parse(code, [])
-	
+		for key in bind_objects:
+			bind_names.append(key)
+			bind_values.append(bind_objects[key])
+
+	var parse_error: Error = expression.parse(code, bind_names)
+
 	if parse_error != OK:
 		return {
 			"status": "error",
 			"error": "Parse failed: " + expression.get_error_text()
 		}
-	
+
 	var base_instance: RefCounted = self
-	var result: Variant = expression.execute([], base_instance, true)
+	_execution_mutex.lock()
+	var result: Variant = expression.execute(bind_values, base_instance, true)
+	_execution_mutex.unlock()
 	
 	if expression.has_execute_failed():
 		return {

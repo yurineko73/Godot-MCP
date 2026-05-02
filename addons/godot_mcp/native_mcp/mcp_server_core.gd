@@ -3,9 +3,17 @@
 # 根据godot-dev-guide添加完整的类型提示
 # 根据mcp-builder添加outputSchema和annotations支持
 
-@tool
 class_name MCPServerCore
 extends RefCounted
+
+# ============================================================================
+# 传输类型枚举
+# ============================================================================
+
+enum TransportType {
+	TRANSPORT_STDIO,    # stdio 传输（默认）
+	TRANSPORT_HTTP      # HTTP 传输
+}
 
 # ============================================================================
 # 信号定义（使用信号解耦通信 - 根据godot-dev-guide）
@@ -27,7 +35,7 @@ signal log_message(level: String, message: String)
 # ============================================================================
 
 const JSONRPC_VERSION: String = "2.0"
-const PROTOCOL_VERSION: String = "2024-11-05"
+const PROTOCOL_VERSION: String = "2025-11-25"
 
 # ============================================================================
 # 状态变量（使用完整类型提示 - 根据godot-dev-guide）
@@ -36,6 +44,12 @@ const PROTOCOL_VERSION: String = "2024-11-05"
 var _active: bool = false
 var _thread: Thread = null
 var _mutex: Mutex = Mutex.new()
+
+# 传输方式相关变量（新增 - 支持多种传输方式）
+var _transport_type: TransportType = TransportType.TRANSPORT_STDIO
+var _transport: McpTransportBase = null  # 传输层实例（使用基类类型）
+var _auth_manager: McpAuthManager = null  # 认证管理器（HTTP 模式使用）
+var _http_port: int = 9080  # HTTP 监听端口
 
 # 消息队列（使用类型化数组 - 根据godot-dev-guide）
 var _message_queue: Array[Dictionary] = []
@@ -63,69 +77,83 @@ var _cache_timestamp: Dictionary = {}  # String -> int
 # var _jsonrpc: JSONRPC = JSONRPC.new()
 
 # ============================================================================
-# 生命周期方法
+# 传输层接口方法（新增 - 支持多种传输方式）
 # ============================================================================
 
-func _init() -> void:
-	# JSONRPC在Godot 4.x中不需要初始化
-	pass
-
-func start() -> bool:
-	printerr("[MCP Server] start() called")
-	
+## 设置传输方式（必须在服务器启动前调用）
+## @param type: TransportType - 传输类型枚举
+func set_transport_type(type: TransportType) -> void:
 	if _active:
-		_log_warn("Server already running")
-		return false
+		_log_error("Cannot change transport type while server is running")
+		return
+	_transport_type = type
+	_log_info("Transport type set to: " + str(_transport_type))
+
+## 设置认证管理器（HTTP 模式使用）
+## @param manager: McpAuthManager - 认证管理器实例
+func set_auth_manager(manager: McpAuthManager) -> void:
+	_auth_manager = manager
+	_log_info("Auth manager set")
+
+## 设置 HTTP 端口（HTTP 模式使用，必须在服务器启动前调用）
+## @param port: int - 监听端口号
+func set_http_port(port: int) -> void:
+	if _transport and _transport.has_method("set_port"):
+		_transport.set_port(port)
+	_http_port = port
+	_log_info("HTTP port set to: " + str(port))
+
+func set_sse_enabled(enabled: bool) -> void:
+	if _transport and _transport.has_method("set_sse_enabled"):
+		_transport.set_sse_enabled(enabled)
+	_log_info("SSE enabled: " + str(enabled))
+
+func set_remote_config(allow_remote: bool, cors_origin: String) -> void:
+	if _transport and _transport.has_method("set_remote_config"):
+		_transport.set_remote_config(allow_remote, cors_origin)
+	_log_info("Remote config - allow: " + str(allow_remote) + ", CORS: " + cors_origin)
+
+## 初始化传输层（根据 _transport_type 创建对应实例）
+## @returns: bool - 初始化成功返回 true，失败返回 false
+func _init_transport() -> bool:
+	match _transport_type:
+		TransportType.TRANSPORT_STDIO:
+			_transport = McpStdioServer.new()
+			_log_info("Initialized stdio transport")
+		
+		TransportType.TRANSPORT_HTTP:
+			_transport = McpHttpServer.new()
+			_transport.set_port(_http_port)
+			if _auth_manager:
+				_transport.set_auth_manager(_auth_manager)
+			_log_info("Initialized HTTP transport on port " + str(_http_port))
+		
+		_:
+			_log_error("Unknown transport type: " + str(_transport_type))
+			return false
 	
-	_log_info("Starting MCP Server...")
-	_active = true
+	# 连接信号（确保线程安全）
+	_transport.message_received.connect(_on_transport_message_received)
+	_transport.server_error.connect(_on_transport_error)
+	_transport.server_started.connect(_on_transport_started)
+	_transport.server_stopped.connect(_on_transport_stopped)
 	
-	ProjectSettings.set_setting("application/run/flush_stdout_on_print", true)
-	
-	_thread = Thread.new()
-	printerr("[MCP Server] Creating thread...")
-	_thread.start(_stdin_listen_loop)
-	printerr("[MCP Server] Thread started")
-	
-	_active = true
-	server_started.emit()
-	_log_info("MCP Server started - listening on stdio")
-	
+	_log_info("Transport layer initialized: " + str(_transport_type))
 	return true
 
-func stop() -> void:
-	if not _active:
-		return
-	
-	_log_info("Stopping MCP Server...")
-	_active = false
-	
-	# 等待线程结束
-	if _thread and _thread.is_alive():
-		_thread.wait_to_finish()
-		_thread = null
-	
-	server_stopped.emit()
-	_log_info("MCP Server stopped")
-
-func is_running() -> bool:
-	return _active
-
-# ============================================================================
-# 主线程消息处理（由call_deferred调用）
-# ============================================================================
-
-func _process_message(message: Dictionary) -> void:
-	if not _active:
-		return
-	
+## 处理来自传输层的消息（线程安全：此函数在主线程执行）
+## @param message: Dictionary - JSON-RPC 消息
+## @param context: Variant - 传输上下文（stdio: null, HTTP: StreamPeerTCP）
+func _on_transport_message_received(message: Dictionary, context: Variant) -> void:
 	# 验证消息格式
 	if not message.has("jsonrpc"):
-		_send_error(null, MCPTypes.ERROR_INVALID_REQUEST, "Missing jsonrpc field")
+		_send_error(null, MCPTypes.ERROR_INVALID_REQUEST, 
+				   "Missing 'jsonrpc' field. Please ensure the message is a valid JSON-RPC 2.0 message.")
 		return
 	
 	if message["jsonrpc"] != JSONRPC_VERSION:
-		_send_error(message.get("id"), MCPTypes.ERROR_INVALID_REQUEST, "Invalid JSON-RPC version")
+		_send_error(message.get("id"), MCPTypes.ERROR_INVALID_REQUEST, 
+				   "Invalid JSON-RPC version. Expected '2.0', got: " + str(message["jsonrpc"]))
 		return
 	
 	# 记录收到的消息
@@ -140,12 +168,75 @@ func _process_message(message: Dictionary) -> void:
 		response = _handle_request(message)
 	else:
 		# 这是一个响应（通常不需要处理）
-		_log_warn("Received unexpected response message")
+		_log_warn("Received unexpected response message: " + JSON.stringify(message))
 		return
 	
 	# 发送响应（如果有）
 	if response:
-		_send_response(response)
+		_send_response(response, context)
+
+## 处理传输层错误
+## @param error: String - 错误描述
+func _on_transport_error(error: String) -> void:
+	_log_error("Transport error: " + error)
+
+## 处理传输层启动
+func _on_transport_started() -> void:
+	_log_info("Transport layer started")
+	server_started.emit()
+
+## 处理传输层停止
+func _on_transport_stopped() -> void:
+	_log_info("Transport layer stopped")
+	server_stopped.emit()
+
+
+# ============================================================================
+# 生命周期方法
+# ============================================================================
+
+func start() -> bool:
+	if _active:
+		_log_warn("Server already running")
+		return false
+	
+	_log_info("Starting MCP Server (transport: " + str(_transport_type) + ")...")
+	
+	# 初始化传输层
+	if not _init_transport():
+		_log_error("Failed to initialize transport layer")
+		return false
+	
+	# 启动传输层
+	var success: bool = _transport.start()
+	
+	if not success:
+		_log_error("Failed to start transport layer")
+		return false
+	
+	_active = true
+	_log_info("MCP Server started successfully (transport: " + str(_transport_type) + ")")
+	
+	return true
+
+func stop() -> void:
+	if not _active:
+		return
+	
+	_log_info("Stopping MCP Server...")
+	
+	# 停止传输层
+	if _transport:
+		_transport.stop()
+		_transport = null
+	
+	_active = false
+	_log_info("MCP Server stopped")
+
+func is_running() -> bool:
+	if _transport:
+		return _transport.is_running()
+	return false
 
 # ============================================================================
 # 请求处理（根据mcp-builder优化）
@@ -205,9 +296,10 @@ func _handle_initialize(message: Dictionary) -> Dictionary:
 	_log_info("Initialize request from client. Protocol: " + client_protocol_version)
 	_log_debug("Client capabilities: " + JSON.stringify(client_capabilities))
 	
-	# 返回服务器capabilities（完整版 - 根据mcp-builder）
+	var negotiated_version: String = _negotiate_protocol_version(client_protocol_version)
+	
 	var result: Dictionary = {
-		"protocolVersion": PROTOCOL_VERSION,
+		"protocolVersion": negotiated_version,
 		"capabilities": MCPTypes.create_capabilities(true, true, true, true),
 		"serverInfo": {
 			"name": "godot-native-mcp",
@@ -219,6 +311,23 @@ func _handle_initialize(message: Dictionary) -> Dictionary:
 	_log_debug("Initialize response: " + JSON.stringify(response))
 	
 	return response
+
+func _negotiate_protocol_version(client_version: String) -> String:
+	var supported_versions: PackedStringArray = [
+		"2025-11-25",
+		"2025-06-18",
+		"2025-03-26",
+		"2024-11-05",
+	]
+	
+	if client_version in supported_versions:
+		return client_version
+	
+	for version in supported_versions:
+		if version == PROTOCOL_VERSION:
+			return version
+	
+	return supported_versions[0]
 
 func _handle_initialized_notification(message: Dictionary) -> Dictionary:
 	_log_info("Client initialized notification received")
@@ -298,14 +407,18 @@ func _handle_tool_call(message: Dictionary) -> Dictionary:
 		}
 		return MCPTypes.create_response(id, error_result)
 	
-	# 构建成功响应
+	var has_error: bool = result is Dictionary and result.has("error")
+
 	var response_result: Dictionary = {
 		"content": [{
 			"type": "text",
 			"text": JSON.stringify(result)
 		}],
-		"isError": false
+		"isError": has_error
 	}
+
+	if not has_error and tool.output_schema.size() > 0:
+		response_result["structuredContent"] = result
 	
 	var response: Dictionary = MCPTypes.create_response(id, response_result)
 	
@@ -544,83 +657,17 @@ func register_prompt(name: String, description: String,
 	_log_info("Prompt registered: " + name)
 
 # ============================================================================
-# stdio传输层（根据godot-dev-guide优化）
+# 响应发送
 # ============================================================================
 
-func _stdin_listen_loop() -> void:
-	_log_info("Stdin listen loop started")
-	
-	while _active:
-		# 读取stdin
-		var input: String = OS.read_string_from_stdin()
-		
-		if not input.is_empty():
-			# 解析消息
-			_parse_and_queue_message(input)
-		
-		# 避免CPU占用过高
-		OS.delay_msec(10)
-	
-	_log_info("Stdin listen loop stopped")
-
-func _parse_and_queue_message(raw_input: String) -> void:
-	var lines: PackedStringArray = raw_input.split("\n")
-	
-	for line in lines:
-		if line.is_empty():
-			continue
-		
-		var json: JSON = JSON.new()
-		var parse_result: Error = json.parse(line)
-		
-		if parse_result != OK:
-			_log_error("JSON parse error: " + json.get_error_message())
-			call_deferred("_send_error", null, MCPTypes.ERROR_PARSE_ERROR, "Parse error", line)
-			continue
-		
-		var message: Dictionary = json.get_data()
-		
-		_mutex.lock()
-		_message_queue.append(message)
-		_mutex.unlock()
-		
-		call_deferred("_process_next_message")
-
-func _process_next_message() -> void:
-	_mutex.lock()
-	
-	if _message_queue.is_empty():
-		_mutex.unlock()
-		return
-	
-	var message: Dictionary = _message_queue.pop_front()
-	
-	_mutex.unlock()
-	
-	# 处理消息
-	_process_message(message)
-
-func _send_response(response: Dictionary) -> void:
+func _send_response(response: Dictionary, context: Variant = null) -> void:
 	var json_string: String = JSON.stringify(response)
 	
-	printerr("[MCP Server] Sending response: " + json_string)
+	if _transport_type == TransportType.TRANSPORT_STDIO:
+		print(json_string)
+	elif _transport_type == TransportType.TRANSPORT_HTTP:
+		_transport.send_response(response, context)
 	
-	var file = FileAccess.open("user://mcp_last_response.json", FileAccess.WRITE)
-	if file:
-		file.store_string(json_string)
-		file.close()
-	
-	var log_file: FileAccess = FileAccess.open("user://mcp_all_responses.log", FileAccess.READ)
-	var existing: String = ""
-	if log_file:
-		existing = log_file.get_as_text()
-		log_file.close()
-	log_file = FileAccess.open("user://mcp_all_responses.log", FileAccess.WRITE)
-	if log_file:
-		log_file.store_string(existing + json_string + "\n---SEPARATOR---\n")
-		log_file.close()
-	
-	print(json_string)
 	response_sent.emit(response)
 
 func _send_error(id: Variant, code: int, message: String, data: Variant = null) -> void:

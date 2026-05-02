@@ -2,7 +2,6 @@
 # 根据mcp-builder添加outputSchema和annotations支持
 # 根据godot-dev-guide添加完整的类型提示
 
-@tool
 class_name MCPTypes
 extends RefCounted
 
@@ -14,7 +13,7 @@ extends RefCounted
 const JSONRPC_VERSION: String = "2.0"
 
 # MCP协议版本
-const PROTOCOL_VERSION: String = "2024-11-05"
+const PROTOCOL_VERSION: String = "2025-11-25"
 
 # 标准MCP方法
 const METHOD_INITIALIZE: String = "initialize"

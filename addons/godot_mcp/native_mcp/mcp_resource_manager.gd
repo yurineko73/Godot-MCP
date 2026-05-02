@@ -4,7 +4,6 @@
 # 作者: AI Assistant
 # 日期: 2026-05-01
 
-@tool
 class_name MCPResourceManager
 extends RefCounted
 

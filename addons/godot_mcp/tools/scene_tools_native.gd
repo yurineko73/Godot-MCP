@@ -7,6 +7,7 @@ class_name SceneToolsNative
 extends RefCounted
 
 var _editor_interface: EditorInterface = null
+var _scene_operation_in_progress: bool = false
 
 func initialize(editor_interface: EditorInterface) -> void:
 	_editor_interface = editor_interface
@@ -196,6 +197,9 @@ func _register_save_scene(server_core: RefCounted) -> void:
 						  output_schema, annotations)
 
 func _tool_save_scene(params: Dictionary) -> Dictionary:
+	if _scene_operation_in_progress:
+		return {"error": "Scene operation in progress, please retry"}
+	
 	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
@@ -285,36 +289,43 @@ func _register_open_scene(server_core: RefCounted) -> void:
 						  output_schema, annotations)
 
 func _tool_open_scene(params: Dictionary) -> Dictionary:
+	if _scene_operation_in_progress:
+		return {"error": "Scene operation in progress, please retry"}
+	_scene_operation_in_progress = true
+	
 	var scene_path: String = params.get("scene_path", "")
 	
 	if scene_path.is_empty():
+		_scene_operation_in_progress = false
 		return {"error": "Missing required parameter: scene_path"}
 	
 	var validation: Dictionary = PathValidator.validate_file_path(scene_path, [".tscn"])
 	if not validation["valid"]:
+		_scene_operation_in_progress = false
 		return {"error": "Invalid path: " + validation["error"]}
 	
 	scene_path = validation["sanitized"]
 	
 	if not FileAccess.file_exists(scene_path):
+		_scene_operation_in_progress = false
 		return {"error": "Scene file not found: " + scene_path}
 	
 	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
+		_scene_operation_in_progress = false
 		return {"error": "Editor interface not available"}
 	
-	# 打开场景
 	editor_interface.open_scene_from_path(scene_path)
 	
-	# 验证场景是否成功打开
 	var opened_scene_root: Node = _get_user_scene_root()
 	if not opened_scene_root:
+		_scene_operation_in_progress = false
 		return {"error": "Failed to open scene: " + scene_path}
 	
-	# 获取打开的场景信�?
 	var scene_root: Node = _get_user_scene_root()
 	var root_type: String = scene_root.get_class() if scene_root else "Unknown"
 	
+	_scene_operation_in_progress = false
 	return {
 		"status": "success",
 		"scene_path": scene_path,
@@ -446,18 +457,29 @@ func _tool_get_scene_structure(params: Dictionary) -> Dictionary:
 	# 构建场景结构
 	var scene_structure: Dictionary = {
 		"scene_name": scene_root.name,
-		"root_node": _build_node_tree(scene_root, 0, max_depth),
+		"root_node": _build_node_tree(scene_root, 0, max_depth, scene_root),
 		"total_nodes": _count_nodes(scene_root)
 	}
 	
 	return scene_structure
 
 # 辅助函数：递归构建节点�?
-static func _build_node_tree(node: Node, current_depth: int, max_depth: int) -> Dictionary:
+static func _make_friendly_path(node: Node, scene_root: Node) -> String:
+	if not scene_root:
+		return str(node.get_path())
+	if node == scene_root:
+		return "/root/" + scene_root.name
+	var node_path: String = str(node.get_path())
+	var root_path: String = str(scene_root.get_path())
+	if node_path.begins_with(root_path + "/"):
+		return "/root/" + scene_root.name + node_path.substr(root_path.length())
+	return node_path
+
+static func _build_node_tree(node: Node, current_depth: int, max_depth: int, scene_root: Node = null) -> Dictionary:
 	var node_info: Dictionary = {
 		"name": node.name,
 		"type": node.get_class(),
-		"path": str(node.get_path()),
+		"path": _make_friendly_path(node, scene_root),
 		"children": []
 	}
 	
@@ -469,7 +491,7 @@ static func _build_node_tree(node: Node, current_depth: int, max_depth: int) -> 
 	# 递归处理子节�?
 	for child_index in range(node.get_child_count()):
 		var child: Node = node.get_child(child_index)
-		var child_tree: Dictionary = _build_node_tree(child, current_depth + 1, max_depth)
+		var child_tree: Dictionary = _build_node_tree(child, current_depth + 1, max_depth, scene_root)
 		node_info["children"].append(child_tree)
 	
 	return node_info

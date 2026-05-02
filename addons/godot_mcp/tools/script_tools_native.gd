@@ -204,19 +204,10 @@ static func _tool_read_script(params: Dictionary) -> Dictionary:
 		return {"error": "Failed to open file: " + script_path}
 	
 	# 读取内容
-	var content: String = ""
-	var line_count: int = 0
-	
-	while not file.eof_reached():
-		var line: String = file.get_line()
-		content += line + "\n"
-		line_count += 1
-	
+	var content: String = file.get_as_text()
 	file.close()
-	
-	# 移除最后一个多余的换行符
-	if not content.is_empty():
-		content = content.trim_suffix("\n")
+
+	var line_count: int = content.split("\n").size()
 	
 	return {
 		"script_path": script_path,

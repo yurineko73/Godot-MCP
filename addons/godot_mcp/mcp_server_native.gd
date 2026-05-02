@@ -13,6 +13,40 @@ extends EditorPlugin
 		auto_start = value
 		notify_property_list_changed()
 
+@export var transport_mode: String = "stdio":
+	set(value):
+		if value == "stdio" or value == "http":
+			transport_mode = value
+			if _native_server:
+				var type: int = MCPServerCore.TransportType.TRANSPORT_STDIO if value == "stdio" \
+					else MCPServerCore.TransportType.TRANSPORT_HTTP
+				_native_server.set_transport_type(type)
+			notify_property_list_changed()
+		else:
+			_log_error("Invalid transport mode: " + value + ". Valid values are 'stdio' or 'http'")
+
+@export var http_port: int = 9080:
+	set(value):
+		if value < 1024 or value > 65535:
+			_log_error("Invalid port: " + str(value) + ". Please use a port between 1024 and 65535.")
+			return
+		http_port = value
+		if _native_server and _native_server.has_method("set_http_port"):
+			_native_server.set_http_port(value)
+		notify_property_list_changed()
+
+@export var auth_enabled: bool = false:
+	set(value):
+		auth_enabled = value
+		notify_property_list_changed()
+
+@export var auth_token: String = "":
+	set(value):
+		if value.length() < 16 and not value.is_empty():
+			_log_warn("Auth token is too short. Please use at least 16 characters for security.")
+		auth_token = value
+		notify_property_list_changed()
+
 @export_range(0, 3, 1) var log_level: int = 2:  # 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG (默认2=INFO，便于测试)
 	set(value):
 		log_level = value
@@ -34,6 +68,21 @@ extends EditorPlugin
 			_native_server.set_rate_limit(value)
 		notify_property_list_changed()
 
+@export var sse_enabled: bool = true:
+	set(value):
+		sse_enabled = value
+		notify_property_list_changed()
+
+@export var allow_remote: bool = false:
+	set(value):
+		allow_remote = value
+		notify_property_list_changed()
+
+@export var cors_origin: String = "*":
+	set(value):
+		cors_origin = value
+		notify_property_list_changed()
+
 # ============================================================================
 # 内部变量（使用完整类型提示 - 根据godot-dev-guide）
 # ============================================================================
@@ -51,19 +100,19 @@ var _tool_instances: Dictionary = {}
 
 func _enter_tree() -> void:
 	printerr("[MCP Plugin] GODOT-NATIVE-MCP PLUGIN LOADING...")
-
+	
 	_log_info("Godot Native MCP Plugin entering tree...")
-
+	
 	Engine.set_meta("GodotMCPPlugin", self)
-
+	
 	_editor_interface = get_editor_interface()
 	if not _editor_interface:
 		_log_error("Failed to get EditorInterface")
 		printerr("[MCP Plugin] ERROR: Failed to get EditorInterface")
 		return
-
+	
 	printerr("[MCP Plugin] EditorInterface obtained")
-
+	
 	_native_server = load("res://addons/godot_mcp/native_mcp/mcp_server_core.gd").new()
 	
 	if not _native_server:
@@ -72,6 +121,34 @@ func _enter_tree() -> void:
 		return
 		
 	printerr("[MCP Plugin] Server core created successfully")
+	
+	# 设置传输方式
+	var type: int = MCPServerCore.TransportType.TRANSPORT_STDIO if transport_mode == "stdio" \
+			else MCPServerCore.TransportType.TRANSPORT_HTTP
+	_native_server.set_transport_type(type)
+	_log_info("Transport type set to: " + transport_mode)
+	
+	# 设置 HTTP 端口
+	_native_server.set_http_port(http_port)
+	_log_info("HTTP port set to: " + str(http_port))
+	
+	# 如果启用了认证，创建认证管理器
+	if auth_enabled and transport_mode == "http":
+		var auth_manager: McpAuthManager = McpAuthManager.new()
+		auth_manager.set_token(auth_token)
+		auth_manager.set_enabled(true)
+		_native_server.set_auth_manager(auth_manager)
+		_log_info("Auth manager created and enabled")
+	
+	# 配置 SSE 和远程访问（仅 HTTP 模式）
+	if transport_mode == "http":
+		if _native_server.has_method("set_sse_enabled"):
+			_native_server.set_sse_enabled(sse_enabled)
+			_log_info("SSE enabled: " + str(sse_enabled))
+		
+		if _native_server.has_method("set_remote_config"):
+			_native_server.set_remote_config(allow_remote, cors_origin)
+			_log_info("Remote config: allow_remote=" + str(allow_remote) + ", cors=" + cors_origin)
 	
 	# 配置服务器
 	_native_server.set_log_level(log_level)
@@ -145,6 +222,60 @@ func _has_settings() -> bool:
 
 func _get_property_list() -> Array:
 	var properties: Array = []
+	
+	properties.append({
+		"name": "MCP Transport Settings",
+		"type": TYPE_NIL,
+		"hint_string": "MCP Transport Settings",
+		"usage": PROPERTY_USAGE_CATEGORY
+	})
+	
+	properties.append({
+		"name": "transport_mode",
+		"type": TYPE_STRING,
+		"hint": PROPERTY_HINT_ENUM,
+		"hint_string": "stdio,http",
+		"usage": PROPERTY_USAGE_DEFAULT
+	})
+	
+	properties.append({
+		"name": "http_port",
+		"type": TYPE_INT,
+		"hint": PROPERTY_HINT_RANGE,
+		"hint_string": "1024,65535,1",
+		"usage": PROPERTY_USAGE_DEFAULT
+	})
+	
+	properties.append({
+		"name": "auth_enabled",
+		"type": TYPE_BOOL,
+		"usage": PROPERTY_USAGE_DEFAULT
+	})
+	
+	properties.append({
+		"name": "auth_token",
+		"type": TYPE_STRING,
+		"hint": PROPERTY_HINT_PASSWORD,
+		"usage": PROPERTY_USAGE_DEFAULT
+	})
+	
+	properties.append({
+		"name": "sse_enabled",
+		"type": TYPE_BOOL,
+		"usage": PROPERTY_USAGE_DEFAULT
+	})
+	
+	properties.append({
+		"name": "allow_remote",
+		"type": TYPE_BOOL,
+		"usage": PROPERTY_USAGE_DEFAULT
+	})
+	
+	properties.append({
+		"name": "cors_origin",
+		"type": TYPE_STRING,
+		"usage": PROPERTY_USAGE_DEFAULT
+	})
 	
 	# 添加属性分组（根据godot-dev-guide）
 	properties.append({
@@ -697,4 +828,6 @@ func _log_debug(message: String) -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE:
-		_exit_tree()
+		if _native_server and _native_server.is_running():
+			_native_server.stop()
+		_native_server = null

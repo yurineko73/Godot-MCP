@@ -1,17 +1,9 @@
-# mcp_panel_native.gd
-# MCP服务器配置面板 - 允许用户在编辑器底部控制MCP服务器
-# 版本: 1.0
-# 作者: AI Assistant
-# 日期: 2026-05-01
-
 @tool
 extends PanelContainer
 
-# 引用
 var _plugin: EditorPlugin = null
 var _server_core: RefCounted = null
 
-# UI元素
 var _status_label: Label = null
 var _start_button: Button = null
 var _stop_button: Button = null
@@ -21,98 +13,158 @@ var _security_level_option: OptionButton = null
 var _log_text_edit: TextEdit = null
 var _tools_list_container: VBoxContainer = null
 
-# ============================================================================
-# 生命周期方法
-# ============================================================================
+var _transport_mode_option: OptionButton = null
+var _http_config_container: VBoxContainer = null
+var _http_port_spin: SpinBox = null
+var _auth_enabled_check: CheckBox = null
+var _auth_token_edit: LineEdit = null
+var _sse_enabled_check: CheckBox = null
+var _allow_remote_check: CheckBox = null
+var _cors_origin_edit: LineEdit = null
+var _rate_limit_spin: SpinBox = null
+var _connection_info_label: Label = null
 
 func _ready() -> void:
-	print("[MCP Panel] Panel ready")
 	_create_ui()
 
 func _exit_tree() -> void:
-	print("[MCP Panel] Panel exiting tree")
+	pass
 
-# ============================================================================
-# 初始化
-# ============================================================================
-
-## 设置插件引用
 func set_plugin(plugin: EditorPlugin) -> void:
 	_plugin = plugin
-	print("[MCP Panel] Plugin reference set")
-	
-	# 获取服务器核心引用
 	if _plugin and _plugin.has_method("get_native_server"):
 		_server_core = _plugin.get_native_server()
-	
-	# 更新UI状态
 	_update_ui_state()
 
-## 设置服务器核心引用
 func set_server_core(server_core: RefCounted) -> void:
 	_server_core = server_core
-	print("[MCP Panel] Server core reference set")
-	
-	# 更新UI状态
 	_update_ui_state()
 
-# ============================================================================
-# UI创建
-# ============================================================================
-
-## 创建UI元素
 func _create_ui() -> void:
-	print("[MCP Panel] Creating UI...")
-	
-	# 设置面板属性
 	custom_minimum_size = Vector2(200, 100)
 	
-	# 创建垂直布局
 	var vbox: VBoxContainer = VBoxContainer.new()
 	add_child(vbox)
 	
-	# 标题
 	var title_label: Label = Label.new()
 	title_label.text = "Godot Native MCP Server"
 	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title_label.add_theme_font_size_override("font_size", 16)
 	vbox.add_child(title_label)
 	
-	# 状态标签
 	_status_label = Label.new()
 	_status_label.text = "Status: Unknown"
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(_status_label)
 	
-	# 分隔符
+	_connection_info_label = Label.new()
+	_connection_info_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_connection_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	vbox.add_child(_connection_info_label)
+	
 	vbox.add_child(HSeparator.new())
 	
-	# 按钮行
+	var transport_title: Label = Label.new()
+	transport_title.text = "传输设置:"
+	vbox.add_child(transport_title)
+	
+	var transport_hbox: HBoxContainer = HBoxContainer.new()
+	vbox.add_child(transport_hbox)
+	
+	var transport_label: Label = Label.new()
+	transport_label.text = "传输模式:"
+	transport_hbox.add_child(transport_label)
+	
+	_transport_mode_option = OptionButton.new()
+	_transport_mode_option.add_item("stdio", 0)
+	_transport_mode_option.add_item("http", 1)
+	_transport_mode_option.item_selected.connect(_on_transport_mode_selected)
+	transport_hbox.add_child(_transport_mode_option)
+	
+	_http_config_container = VBoxContainer.new()
+	vbox.add_child(_http_config_container)
+	
+	var port_hbox: HBoxContainer = HBoxContainer.new()
+	_http_config_container.add_child(port_hbox)
+	
+	var port_label: Label = Label.new()
+	port_label.text = "端口:"
+	port_hbox.add_child(port_label)
+	
+	_http_port_spin = SpinBox.new()
+	_http_port_spin.min_value = 1024
+	_http_port_spin.max_value = 65535
+	_http_port_spin.value = 9080
+	_http_port_spin.step = 1
+	_http_port_spin.value_changed.connect(_on_http_port_changed)
+	port_hbox.add_child(_http_port_spin)
+	
+	var auth_hbox: HBoxContainer = HBoxContainer.new()
+	_http_config_container.add_child(auth_hbox)
+	
+	_auth_enabled_check = CheckBox.new()
+	_auth_enabled_check.text = "启用认证"
+	_auth_enabled_check.toggled.connect(_on_auth_enabled_toggled)
+	auth_hbox.add_child(_auth_enabled_check)
+	
+	var token_label: Label = Label.new()
+	token_label.text = "Token:"
+	auth_hbox.add_child(token_label)
+	
+	_auth_token_edit = LineEdit.new()
+	_auth_token_edit.secret = true
+	_auth_token_edit.placeholder_text = "输入认证令牌"
+	_auth_token_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auth_token_edit.text_changed.connect(_on_auth_token_changed)
+	auth_hbox.add_child(_auth_token_edit)
+	
+	_sse_enabled_check = CheckBox.new()
+	_sse_enabled_check.text = "启用 SSE"
+	_sse_enabled_check.toggled.connect(_on_sse_enabled_toggled)
+	_http_config_container.add_child(_sse_enabled_check)
+	
+	_allow_remote_check = CheckBox.new()
+	_allow_remote_check.text = "允许远程访问"
+	_allow_remote_check.toggled.connect(_on_allow_remote_toggled)
+	_http_config_container.add_child(_allow_remote_check)
+	
+	var cors_hbox: HBoxContainer = HBoxContainer.new()
+	_http_config_container.add_child(cors_hbox)
+	
+	var cors_label: Label = Label.new()
+	cors_label.text = "CORS 源:"
+	cors_hbox.add_child(cors_label)
+	
+	_cors_origin_edit = LineEdit.new()
+	_cors_origin_edit.text = "*"
+	_cors_origin_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_cors_origin_edit.text_changed.connect(_on_cors_origin_changed)
+	cors_hbox.add_child(_cors_origin_edit)
+	
+	_http_config_container.visible = false
+	
+	vbox.add_child(HSeparator.new())
+	
 	var button_hbox: HBoxContainer = HBoxContainer.new()
 	vbox.add_child(button_hbox)
 	
-	# 启动按钮
 	_start_button = Button.new()
 	_start_button.text = "Start Server"
 	_start_button.pressed.connect(_on_start_pressed)
 	button_hbox.add_child(_start_button)
 	
-	# 停止按钮
 	_stop_button = Button.new()
 	_stop_button.text = "Stop Server"
 	_stop_button.pressed.connect(_on_stop_pressed)
 	button_hbox.add_child(_stop_button)
 	
-	# 分隔符
 	vbox.add_child(HSeparator.new())
 	
-	# 自动启动选项
 	_auto_start_check = CheckBox.new()
 	_auto_start_check.text = "Auto Start"
 	_auto_start_check.toggled.connect(_on_auto_start_toggled)
 	vbox.add_child(_auto_start_check)
 	
-	# 日志级别选项
 	var log_hbox: HBoxContainer = HBoxContainer.new()
 	vbox.add_child(log_hbox)
 	
@@ -128,7 +180,6 @@ func _create_ui() -> void:
 	_log_level_option.item_selected.connect(_on_log_level_selected)
 	log_hbox.add_child(_log_level_option)
 	
-	# 安全级别选项
 	var security_hbox: HBoxContainer = HBoxContainer.new()
 	vbox.add_child(security_hbox)
 	
@@ -142,60 +193,58 @@ func _create_ui() -> void:
 	_security_level_option.item_selected.connect(_on_security_level_selected)
 	security_hbox.add_child(_security_level_option)
 	
-	# 分隔符
+	var rate_hbox: HBoxContainer = HBoxContainer.new()
+	vbox.add_child(rate_hbox)
+	
+	var rate_label: Label = Label.new()
+	rate_label.text = "Rate Limit:"
+	rate_hbox.add_child(rate_label)
+	
+	_rate_limit_spin = SpinBox.new()
+	_rate_limit_spin.min_value = 10
+	_rate_limit_spin.max_value = 1000
+	_rate_limit_spin.step = 10
+	_rate_limit_spin.value = 100
+	_rate_limit_spin.value_changed.connect(_on_rate_limit_changed)
+	rate_hbox.add_child(_rate_limit_spin)
+	
 	vbox.add_child(HSeparator.new())
 	
-	# 日志查看器标题
 	var log_title: Label = Label.new()
 	log_title.text = "Server Log:"
 	vbox.add_child(log_title)
 	
-	# 日志查看器
 	_log_text_edit = TextEdit.new()
 	_log_text_edit.editable = false
 	_log_text_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_log_text_edit.custom_minimum_size = Vector2(200, 150)
 	vbox.add_child(_log_text_edit)
 	
-	# 清空日志按钮
 	var clear_log_button: Button = Button.new()
 	clear_log_button.text = "Clear Log"
 	clear_log_button.pressed.connect(_on_clear_log_pressed)
 	vbox.add_child(clear_log_button)
 	
-	# 分隔符
 	vbox.add_child(HSeparator.new())
 	
-	# 工具管理标题
 	var tools_title: Label = Label.new()
 	tools_title.text = "Tool Management:"
 	vbox.add_child(tools_title)
 	
-	# 工具列表容器
 	_tools_list_container = VBoxContainer.new()
 	vbox.add_child(_tools_list_container)
 	
-	# 初始状态
 	_update_ui_state()
 	_refresh_tools_list()
-	
-	print("[MCP Panel] UI created successfully")
 
-# ============================================================================
-# UI更新
-# ============================================================================
-
-## 更新UI状态
 func _update_ui_state() -> void:
 	if not _status_label:
 		return
 	
-	# 获取服务器状态
 	var is_running: bool = false
 	if _server_core and _server_core.has_method("is_running"):
 		is_running = _server_core.is_running()
 	
-	# 更新状态标签
 	if is_running:
 		_status_label.text = "Status: Running"
 		_status_label.add_theme_color_override("font_color", Color.GREEN)
@@ -203,13 +252,11 @@ func _update_ui_state() -> void:
 		_status_label.text = "Status: Stopped"
 		_status_label.add_theme_color_override("font_color", Color.RED)
 	
-	# 更新按钮状态
 	if _start_button:
 		_start_button.disabled = is_running
 	if _stop_button:
 		_stop_button.disabled = not is_running
 	
-	# 更新选项状态
 	if _plugin:
 		if _auto_start_check:
 			_auto_start_check.button_pressed = _plugin.auto_start
@@ -219,88 +266,144 @@ func _update_ui_state() -> void:
 		
 		if _security_level_option:
 			_security_level_option.select(_plugin.security_level)
+		
+		if _transport_mode_option:
+			var mode: String = _plugin.transport_mode if _plugin.get("transport_mode") != null else "stdio"
+			_transport_mode_option.selected = 0 if mode == "stdio" else 1
+			_http_config_container.visible = (mode == "http")
+		
+		if _http_port_spin:
+			_http_port_spin.value = _plugin.http_port if _plugin.get("http_port") != null else 9080
+		
+		if _auth_enabled_check:
+			_auth_enabled_check.button_pressed = _plugin.auth_enabled if _plugin.get("auth_enabled") != null else false
+		
+		if _auth_token_edit:
+			_auth_token_edit.text = _plugin.auth_token if _plugin.get("auth_token") != null else ""
+		
+		if _sse_enabled_check:
+			_sse_enabled_check.button_pressed = _plugin.sse_enabled if _plugin.get("sse_enabled") != null else true
+		
+		if _allow_remote_check:
+			_allow_remote_check.button_pressed = _plugin.allow_remote if _plugin.get("allow_remote") != null else false
+		
+		if _cors_origin_edit:
+			_cors_origin_edit.text = _plugin.cors_origin if _plugin.get("cors_origin") != null else "*"
+		
+		if _rate_limit_spin:
+			_rate_limit_spin.value = _plugin.rate_limit if _plugin.get("rate_limit") != null else 100
+	
+	if _transport_mode_option:
+		_transport_mode_option.disabled = is_running
+	
+	if _http_config_container:
+		_set_controls_disabled(_http_config_container, is_running)
+	
+	if _auth_token_edit:
+		var auth_on: bool = _auth_enabled_check.button_pressed if _auth_enabled_check else false
+		_auth_token_edit.editable = auth_on and not is_running
+	
+	if _connection_info_label:
+		var mode: String = "stdio"
+		if _plugin and _plugin.get("transport_mode") != null:
+			mode = _plugin.transport_mode
+		if mode == "http" and is_running:
+			var port: int = 9080
+			if _plugin and _plugin.get("http_port") != null:
+				port = _plugin.http_port
+			_connection_info_label.text = "URL: http://localhost:" + str(port) + "/mcp"
+		elif mode == "stdio" and is_running:
+			_connection_info_label.text = "Mode: stdio (via stdin/stdout)"
+		else:
+			_connection_info_label.text = ""
 
-# ============================================================================
-# 按钮回调
-# ============================================================================
+func _set_controls_disabled(container: Container, disabled: bool) -> void:
+	for child in container.get_children():
+		if child is SpinBox or child is LineEdit:
+			child.editable = not disabled
+		elif child is CheckBox or child is OptionButton or child is Button:
+			child.disabled = disabled
+		elif child is Container:
+			_set_controls_disabled(child, disabled)
 
-## 启动按钮按下
 func _on_start_pressed() -> void:
-	print("[MCP Panel] Start button pressed")
-	
 	if not _plugin:
-		printerr("[MCP Panel] Plugin reference not set")
 		return
-	
 	_plugin.start_server()
-	
-	# 延迟更新UI状态
 	await get_tree().process_frame
 	_update_ui_state()
 
-## 停止按钮按下
 func _on_stop_pressed() -> void:
-	print("[MCP Panel] Stop button pressed")
-	
 	if not _plugin:
-		printerr("[MCP Panel] Plugin reference not set")
 		return
-	
 	_plugin.stop_server()
-	
-	# 延迟更新UI状态
 	await get_tree().process_frame
 	_update_ui_state()
 
-# ============================================================================
-# 选项回调
-# ============================================================================
-
-## 自动启动选项切换
 func _on_auto_start_toggled(button_pressed: bool) -> void:
-	print("[MCP Panel] Auto start toggled: " + str(button_pressed))
-	
 	if _plugin:
 		_plugin.auto_start = button_pressed
 
-## 日志级别选项选择
 func _on_log_level_selected(index: int) -> void:
-	print("[MCP Panel] Log level selected: " + str(index))
-	
 	if _plugin:
 		_plugin.log_level = index
 
-## 安全级别选项选择
 func _on_security_level_selected(index: int) -> void:
-	print("[MCP Panel] Security level selected: " + str(index))
-	
 	if _plugin:
 		_plugin.security_level = index
 
-## 清空日志按钮按下
+func _on_transport_mode_selected(index: int) -> void:
+	var mode: String = _transport_mode_option.get_item_text(index)
+	if _plugin:
+		_plugin.transport_mode = mode
+	_http_config_container.visible = (mode == "http")
+	_update_ui_state()
+
+func _on_http_port_changed(value: float) -> void:
+	if _plugin:
+		_plugin.http_port = int(value)
+
+func _on_auth_enabled_toggled(enabled: bool) -> void:
+	if _plugin:
+		_plugin.auth_enabled = enabled
+	if _auth_token_edit:
+		_auth_token_edit.editable = enabled
+
+func _on_auth_token_changed(text: String) -> void:
+	if _plugin:
+		_plugin.auth_token = text
+
+func _on_sse_enabled_toggled(enabled: bool) -> void:
+	if _plugin:
+		_plugin.sse_enabled = enabled
+
+func _on_allow_remote_toggled(enabled: bool) -> void:
+	if _plugin:
+		_plugin.allow_remote = enabled
+
+func _on_cors_origin_changed(text: String) -> void:
+	if _plugin:
+		_plugin.cors_origin = text
+
+func _on_rate_limit_changed(value: float) -> void:
+	if _plugin:
+		_plugin.rate_limit = int(value)
+
 func _on_clear_log_pressed() -> void:
-	print("[MCP Panel] Clear log button pressed")
-	
 	if _log_text_edit:
 		_log_text_edit.text = ""
 
-## 刷新工具列表
 func _refresh_tools_list() -> void:
-	print("[MCP Panel] Refreshing tools list")
-	
 	if not _tools_list_container:
 		return
 	
-	# 清空现有列表
 	for child in _tools_list_container.get_children():
 		child.queue_free()
 	
-	# 获取工具列表
 	var tools: Array = []
 	if _server_core and _server_core.has_method("get_registered_tools"):
 		tools = _server_core.get_registered_tools()
 	
-	# 添加工具开关
 	for tool_info in tools:
 		var tool_hbox: HBoxContainer = HBoxContainer.new()
 		_tools_list_container.add_child(tool_hbox)
@@ -316,18 +419,13 @@ func _refresh_tools_list() -> void:
 		desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 		tool_hbox.add_child(desc_label)
 
-## 工具启用/禁用切换
 func _on_tool_toggled(button_pressed: bool, tool_name: String) -> void:
-	print("[MCP Panel] Tool toggled: " + tool_name + " = " + str(button_pressed))
-	
 	if _server_core and _server_core.has_method("set_tool_enabled"):
 		_server_core.set_tool_enabled(tool_name, button_pressed)
 
-## 更新日志显示
 func update_log(message: String) -> void:
 	if not _log_text_edit:
 		return
-	
 	if Thread.is_main_thread():
 		_append_log(message)
 	else:
@@ -336,15 +434,9 @@ func update_log(message: String) -> void:
 func _append_log(message: String) -> void:
 	if not _log_text_edit:
 		return
-	
 	_log_text_edit.text += message + "\n"
 	_log_text_edit.scroll_vertical = _log_text_edit.get_line_count()
 
-# ============================================================================
-# 公共API
-# ============================================================================
-
-## 刷新UI状态
 func refresh() -> void:
 	if Thread.is_main_thread():
 		_update_ui_state()

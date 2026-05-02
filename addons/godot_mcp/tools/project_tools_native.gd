@@ -227,8 +227,11 @@ static func _tool_list_project_resources(params: Dictionary) -> Dictionary:
 		".tres", ".res", ".otr", ".font", ".theme",
 		".png", ".jpg", ".jpeg", ".webp", ".svg", ".bmp", ".hdr",
 		".ogg", ".wav", ".mp3", ".oggstr",
-		".obj", ".glb", ".gltf", ".mesh",
-		".material", ".shader", ".gdshader"
+		".obj", ".glb", ".gltf", ".mesh", ".fbx",
+		".material", ".shader", ".gdshader",
+		".tscn", ".gd", ".cfg", ".json",
+		".ttf", ".otf", ".woff", ".woff2",
+		".import", ".uid"
 	]
 	
 	# 如果提供了resource_types，使用它；否则使用默认扩展名
