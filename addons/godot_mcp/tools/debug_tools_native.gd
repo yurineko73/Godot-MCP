@@ -190,7 +190,13 @@ func _get_runtime_logs(types: Array, count: int, offset: int, order: String) -> 
 
 	var file: FileAccess = FileAccess.open(log_path, FileAccess.READ)
 	if not file:
-		return {"error": "Failed to open runtime log file: " + log_path}
+		return {
+			"logs": [],
+			"count": 0,
+			"total_available": 0,
+			"source": "runtime",
+			"note": "Runtime log file not available. Logs are only created after running the project."
+		}
 
 	var all_lines: Array = []
 	while not file.eof_reached():
@@ -504,9 +510,11 @@ func _tool_execute_editor_script(params: Dictionary) -> Dictionary:
 	if not editor_interface:
 		return {"success": false, "error": "Editor interface not available", "output": []}
 
+	var normalized_code: String = _normalize_indentation(code)
+
 	var script: GDScript = GDScript.new()
 	var wrapped_code: String = "extends RefCounted\n\nvar _output: Array = []\nvar edited_scene: Node = null\n\nfunc _custom_print(msg) -> void:\n\t_output.append(str(msg))\n\nfunc execute() -> Array:\n"
-	for line in code.split("\n"):
+	for line in normalized_code.split("\n"):
 		wrapped_code += "\t" + line + "\n"
 	wrapped_code += "\n\treturn _output\n"
 
@@ -514,7 +522,7 @@ func _tool_execute_editor_script(params: Dictionary) -> Dictionary:
 
 	var reload_ok: Error = script.reload()
 	if reload_ok != OK:
-		return {"success": false, "error": "Script compilation failed. Check syntax.", "output": []}
+		return {"success": false, "error": "Script compilation failed. Check syntax. Note: use tab indentation for code blocks inside if/for/while.", "output": []}
 
 	var instance: RefCounted = script.new()
 	if not instance:
@@ -546,3 +554,43 @@ func _tool_execute_editor_script(params: Dictionary) -> Dictionary:
 		"success": true,
 		"output": output
 	}
+
+func _normalize_indentation(code: String) -> String:
+	var lines: PackedStringArray = code.split("\n")
+	var min_indent: int = 999999
+	for line in lines:
+		if line.strip_edges().is_empty():
+			continue
+		var indent: int = 0
+		for c in line:
+			if c == "\t":
+				indent += 4
+			elif c == " ":
+				indent += 1
+			else:
+				break
+		if indent < min_indent:
+			min_indent = indent
+	if min_indent == 0 or min_indent == 999999:
+		return code
+	var result_lines: PackedStringArray = []
+	for line in lines:
+		if line.strip_edges().is_empty():
+			result_lines.append("")
+			continue
+		var removed: int = 0
+		var new_line: String = ""
+		for c in line:
+			if removed >= min_indent:
+				new_line += c
+			elif c == "\t":
+				removed += 4
+				if removed > min_indent:
+					new_line += " ".repeat(removed - min_indent)
+			elif c == " ":
+				removed += 1
+			else:
+				new_line += c
+				removed = min_indent
+		result_lines.append(new_line)
+	return "\n".join(result_lines)

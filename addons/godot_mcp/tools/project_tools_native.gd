@@ -51,7 +51,8 @@ func _register_get_project_info(server_core: RefCounted) -> void:
 			"project_version": {"type": "string"},
 			"project_description": {"type": "string"},
 			"main_scene": {"type": "string"},
-			"project_path": {"type": "string"}
+			"project_path": {"type": "string"},
+			"godot_version": {"type": "string"}
 		}
 	}
 	
@@ -80,13 +81,16 @@ func _tool_get_project_info(params: Dictionary) -> Dictionary:
 			main_scene = ResourceUID.uid_to_path(main_scene_uid)
 	
 	var project_path: String = ProjectSettings.globalize_path("res://")
+	var godot_version: Dictionary = Engine.get_version_info()
+	var version_str: String = "%d.%d.%s" % [godot_version.get("major", 0), godot_version.get("minor", 0), godot_version.get("status", "")]
 	
 	return {
 		"project_name": project_name,
 		"project_version": project_version,
 		"project_description": project_description,
 		"main_scene": main_scene,
-		"project_path": project_path
+		"project_path": project_path,
+		"godot_version": version_str
 	}
 
 # ============================================================================
@@ -224,8 +228,7 @@ func _tool_list_project_resources(params: Dictionary) -> Dictionary:
 		".obj", ".glb", ".gltf", ".mesh", ".fbx",
 		".material", ".shader", ".gdshader",
 		".tscn", ".gd", ".cfg", ".json",
-		".ttf", ".otf", ".woff", ".woff2",
-		".import", ".uid"
+		".ttf", ".otf", ".woff", ".woff2"
 	]
 	
 	# 如果提供了resource_types，使用它；否则使用默认扩展名
@@ -359,6 +362,9 @@ func _tool_create_resource(params: Dictionary) -> Dictionary:
 	if not ClassDB.class_exists(resource_type):
 		return {"error": "Invalid resource type: " + resource_type}
 	
+	if not ClassDB.is_parent_class(resource_type, "Resource"):
+		return {"error": "Type '%s' is not a Resource type" % resource_type}
+	
 	# 创建资源实例
 	var resource: RefCounted = ClassDB.instantiate(resource_type)
 	
@@ -459,7 +465,7 @@ func _scan_directory(path: String, directories: Array, file_counts: Dictionary, 
 				_scan_directory(full_path + "/", directories, file_counts, current_depth + 1, max_depth)
 		else:
 			var ext: String = file_name.get_extension().to_lower()
-			if not ext.is_empty():
+			if not ext.is_empty() and ext != "import" and ext != "uid":
 				if not file_counts.has(ext):
 					file_counts[ext] = 0
 				file_counts[ext] += 1

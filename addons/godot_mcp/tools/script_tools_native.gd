@@ -620,7 +620,7 @@ func _register_get_current_script(server_core: RefCounted) -> void:
 func _tool_get_current_script(params: Dictionary) -> Dictionary:
 	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
-		return {"error": "Editor interface not available"}
+		return {"script_found": false, "message": "Editor interface not available"}
 
 	var script_editor: ScriptEditor = editor_interface.get_script_editor()
 	if not script_editor:
@@ -628,13 +628,15 @@ func _tool_get_current_script(params: Dictionary) -> Dictionary:
 
 	var current_script: Script = script_editor.get_current_script()
 	if not current_script:
-		return {"script_found": false, "message": "No script is currently being edited"}
+		return {"script_found": false, "message": "No script is currently being edited in the script editor"}
 
 	var script_path: String = current_script.resource_path
+	if script_path.is_empty():
+		return {"script_found": false, "message": "Current script has no file path (may be a built-in script)"}
 
 	var file: FileAccess = FileAccess.open(script_path, FileAccess.READ)
 	if not file:
-		return {"error": "Failed to open script file: " + script_path}
+		return {"script_found": false, "message": "Failed to open script file: " + script_path}
 
 	var content: String = file.get_as_text()
 	file.close()

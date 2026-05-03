@@ -388,9 +388,13 @@ func _tool_get_current_scene(params: Dictionary) -> Dictionary:
 	var root_node_type: String = scene_root.get_class()
 	var node_count: int = _count_nodes(scene_root)
 	
-	# 检查场景是否已修改（通过检查是否有unsaved changes�?
-	# 注意：Godot API没有直接获取此状态的方法，这里使用启发式判断
-	var is_modified: bool = false  # 简化处理，实际应该检查EditorInterface的内部状�?
+	var is_modified: bool = false
+	var undo_redo_mgr: EditorUndoRedoManager = editor_interface.get_editor_undo_redo()
+	if undo_redo_mgr and scene_root:
+		var history_id: int = undo_redo_mgr.get_object_history_id(scene_root)
+		var undo_redo: UndoRedo = undo_redo_mgr.get_history_undo_redo(history_id)
+		if undo_redo:
+			is_modified = undo_redo.has_undo()
 	
 	return {
 		"scene_name": scene_name,

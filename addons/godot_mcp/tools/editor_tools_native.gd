@@ -88,10 +88,10 @@ func _register_get_editor_state(server_core: RefCounted) -> void:
 			"active_scene": {"type": "string"},
 			"selected_nodes": {
 				"type": "array",
-				"items": {"type": "string"}
+				"items": {"type": "object"}
 			},
 			"editor_mode": {"type": "string"},
-			"viewport_camera": {"type": "object"}
+			"selected_count": {"type": "integer"}
 		}
 	}
 	
@@ -116,14 +116,23 @@ func _tool_get_editor_state(params: Dictionary) -> Dictionary:
 	var scene_root: Node = _get_user_scene_root()
 	var active_scene: String = scene_root.name if scene_root else ""
 	
-	var selected_nodes: Array[String] = []
+	var selected_nodes: Array = []
 	var selection: EditorSelection = editor_interface.get_selection()
 	if selection:
 		var selected: Array[Node] = selection.get_selected_nodes()
 		for node in selected:
-			selected_nodes.append(_make_friendly_path(node, scene_root))
+			var node_info: Dictionary = {
+				"path": _make_friendly_path(node, scene_root),
+				"type": node.get_class()
+			}
+			var node_script: Variant = node.get_script()
+			if node_script and node_script is Script:
+				node_info["script_path"] = node_script.resource_path
+			selected_nodes.append(node_info)
 	
 	var editor_mode: String = "editor"
+	if editor_interface.is_playing_scene():
+		editor_mode = "playing"
 	
 	return {
 		"active_scene": active_scene,
@@ -174,26 +183,21 @@ func _register_run_project(server_core: RefCounted) -> void:
 						  output_schema, annotations)
 
 func _tool_run_project(params: Dictionary) -> Dictionary:
-	if _editor_operation_in_progress:
-		return {"error": "Editor operation in progress, please retry"}
-	_editor_operation_in_progress = true
-	
 	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
-		_editor_operation_in_progress = false
 		return {"error": "Editor interface not available"}
+	
+	if editor_interface.is_playing_scene():
+		return {"error": "Project is already running. Stop it first with stop_project."}
 	
 	var scene_path: String = params.get("scene_path", "")
 	
 	if not scene_path.is_empty():
 		if not FileAccess.file_exists(scene_path):
-			_editor_operation_in_progress = false
 			return {"error": "Scene file not found: " + scene_path}
 		editor_interface.play_custom_scene(scene_path)
 	else:
 		editor_interface.play_current_scene()
-	
-	_editor_operation_in_progress = false
 	
 	return {
 		"status": "success",
@@ -237,18 +241,14 @@ func _register_stop_project(server_core: RefCounted) -> void:
 						  output_schema, annotations)
 
 func _tool_stop_project(params: Dictionary) -> Dictionary:
-	if _editor_operation_in_progress:
-		return {"error": "Editor operation in progress, please retry"}
-	_editor_operation_in_progress = true
-	
 	var editor_interface: EditorInterface = _get_editor_interface()
 	if not editor_interface:
-		_editor_operation_in_progress = false
 		return {"error": "Editor interface not available"}
 	
-	editor_interface.stop_playing_scene()
+	if not editor_interface.is_playing_scene():
+		return {"error": "Project is not currently running."}
 	
-	_editor_operation_in_progress = false
+	editor_interface.stop_playing_scene()
 	
 	return {
 		"status": "success",
@@ -275,13 +275,12 @@ func _register_get_selected_nodes(server_core: RefCounted) -> void:
 		"properties": {
 			"selected_nodes": {
 				"type": "array",
-				"items": {"type": "string"}
+				"items": {"type": "object"}
 			},
 			"count": {"type": "integer"}
 		}
 	}
 	
-	# annotations - readOnlyHint = true
 	var annotations: Dictionary = {
 		"readOnlyHint": true,
 		"destructiveHint": false,
@@ -289,7 +288,6 @@ func _register_get_selected_nodes(server_core: RefCounted) -> void:
 		"openWorldHint": false
 	}
 	
-	# 注册工具
 	server_core.register_tool(tool_name, description, input_schema,
 						  Callable(self, "_tool_get_selected_nodes"),
 						  output_schema, annotations)
@@ -314,6 +312,14 @@ func _tool_get_selected_nodes(params: Dictionary) -> Dictionary:
 			if node_script and node_script is Script:
 				node_info["script_path"] = node_script.resource_path
 			selected_nodes.append(node_info)
+	
+	if selected_nodes.is_empty():
+		var edited_scene: Node = editor_interface.get_edited_scene_root()
+		if edited_scene:
+			selected_nodes.append({
+				"path": _make_friendly_path(edited_scene, scene_root),
+				"type": edited_scene.get_class()
+			})
 	
 	return {
 		"selected_nodes": selected_nodes,
