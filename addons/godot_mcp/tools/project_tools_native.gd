@@ -23,17 +23,11 @@ func _get_editor_interface() -> EditorInterface:
 # ============================================================================
 
 func register_tools(server_core: RefCounted) -> void:
-	# 注册get_project_info工具
 	_register_get_project_info(server_core)
-	
-	# 注册get_project_settings工具
 	_register_get_project_settings(server_core)
-	
-	# 注册list_project_resources工具
 	_register_list_project_resources(server_core)
-	
-	# 注册create_resource工具
 	_register_create_resource(server_core)
+	_register_get_project_structure(server_core)
 
 # ============================================================================
 # get_project_info - 获取项目信息
@@ -74,7 +68,7 @@ func _register_get_project_info(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_get_project_info"),
 						  output_schema, annotations)
 
-static func _tool_get_project_info(params: Dictionary) -> Dictionary:
+func _tool_get_project_info(params: Dictionary) -> Dictionary:
 	var project_name: String = ProjectSettings.get_setting("application/config/name", "")
 	var project_version: String = ProjectSettings.get_setting("application/config/version", "")
 	var project_description: String = ProjectSettings.get_setting("application/config/description", "")
@@ -136,7 +130,7 @@ func _register_get_project_settings(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_get_project_settings"),
 						  output_schema, annotations)
 
-static func _tool_get_project_settings(params: Dictionary) -> Dictionary:
+func _tool_get_project_settings(params: Dictionary) -> Dictionary:
 	var filter: String = params.get("filter", "")
 	
 	var settings: Dictionary = {}
@@ -209,7 +203,7 @@ func _register_list_project_resources(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_list_project_resources"),
 						  output_schema, annotations)
 
-static func _tool_list_project_resources(params: Dictionary) -> Dictionary:
+func _tool_list_project_resources(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var search_path: String = params.get("search_path", "res://")
 	var resource_types: Array = params.get("resource_types", [])
@@ -258,7 +252,7 @@ static func _tool_list_project_resources(params: Dictionary) -> Dictionary:
 	}
 
 # 辅助函数：递归收集资源文件
-static func _collect_resources(directory_path: String, extensions: Array[String], result: Array[String]) -> void:
+func _collect_resources(directory_path: String, extensions: Array[String], result: Array[String]) -> void:
 	var dir: DirAccess = DirAccess.open(directory_path)
 	
 	if not dir:
@@ -341,7 +335,7 @@ func _register_create_resource(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_create_resource"),
 						  output_schema, annotations)
 
-static func _tool_create_resource(params: Dictionary) -> Dictionary:
+func _tool_create_resource(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var resource_path: String = params.get("resource_path", "")
 	var resource_type: String = params.get("resource_type", "")
@@ -387,3 +381,87 @@ static func _tool_create_resource(params: Dictionary) -> Dictionary:
 		"resource_path": resource_path,
 		"resource_type": resource_type
 	}
+
+# ============================================================================
+# get_project_structure - 获取项目目录结构
+# ============================================================================
+
+func _register_get_project_structure(server_core: RefCounted) -> void:
+	var tool_name: String = "get_project_structure"
+	var description: String = "Get the project directory structure with file counts by extension. Returns directories and file type statistics."
+
+	var input_schema: Dictionary = {
+		"type": "object",
+		"properties": {
+			"max_depth": {
+				"type": "integer",
+				"description": "Maximum directory depth to traverse. Default is 3.",
+				"default": 3
+			}
+		}
+	}
+
+	var output_schema: Dictionary = {
+		"type": "object",
+		"properties": {
+			"directories": {"type": "array", "items": {"type": "string"}},
+			"file_counts": {"type": "object"},
+			"total_files": {"type": "integer"},
+			"total_directories": {"type": "integer"}
+		}
+	}
+
+	var annotations: Dictionary = {
+		"readOnlyHint": true,
+		"destructiveHint": false,
+		"idempotentHint": true,
+		"openWorldHint": false
+	}
+
+	server_core.register_tool(tool_name, description, input_schema,
+						  Callable(self, "_tool_get_project_structure"),
+						  output_schema, annotations)
+
+func _tool_get_project_structure(params: Dictionary) -> Dictionary:
+	var max_depth: int = params.get("max_depth", 3)
+	var directories: Array = []
+	var file_counts: Dictionary = {}
+
+	_scan_directory("res://", directories, file_counts, 0, max_depth)
+
+	var total_files: int = 0
+	for ext in file_counts:
+		total_files += file_counts[ext]
+
+	return {
+		"directories": directories,
+		"file_counts": file_counts,
+		"total_files": total_files,
+		"total_directories": directories.size()
+	}
+
+func _scan_directory(path: String, directories: Array, file_counts: Dictionary, current_depth: int, max_depth: int) -> void:
+	if current_depth > max_depth:
+		return
+
+	var dir: DirAccess = DirAccess.open(path)
+	if not dir:
+		return
+
+	directories.append(path)
+
+	dir.list_dir_begin()
+	var file_name: String = dir.get_next()
+	while file_name != "":
+		var full_path: String = path + file_name
+		if dir.current_is_dir():
+			if not file_name.begins_with("."):
+				_scan_directory(full_path + "/", directories, file_counts, current_depth + 1, max_depth)
+		else:
+			var ext: String = file_name.get_extension().to_lower()
+			if not ext.is_empty():
+				if not file_counts.has(ext):
+					file_counts[ext] = 0
+				file_counts[ext] += 1
+		file_name = dir.get_next()
+	dir.list_dir_end()

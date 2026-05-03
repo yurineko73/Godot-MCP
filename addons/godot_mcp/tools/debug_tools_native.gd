@@ -36,6 +36,7 @@ func register_tools(server_core: RefCounted) -> void:
 	_register_execute_script(server_core)
 	_register_get_performance_metrics(server_core)
 	_register_debug_print(server_core)
+	_register_execute_editor_script(server_core)
 
 func _on_log_message(level: String, message: String) -> void:
 	var log_entry: String = "[%s] %s" % [level, message]
@@ -51,65 +52,179 @@ func _on_log_message(level: String, message: String) -> void:
 
 func _register_get_editor_logs(server_core: RefCounted) -> void:
 	var tool_name: String = "get_editor_logs"
-	var description: String = "Get recent editor log messages. Note: This captures output from the MCP server and print statements."
-	
-	# inputSchema
+	var description: String = "Get recent log messages from the editor or runtime. Supports filtering by source, type, and pagination."
+
 	var input_schema: Dictionary = {
 		"type": "object",
 		"properties": {
-			"max_lines": {
+			"source": {
+				"type": "string",
+				"description": "Log source: 'mcp' (MCP server logs, default), 'runtime' (user://logs/godot.log).",
+				"default": "mcp",
+				"enum": ["mcp", "runtime"]
+			},
+			"type": {
+				"type": "array",
+				"items": {"type": "string"},
+				"description": "Filter by log types (e.g. ['Error', 'Warning', 'Info']). Only applies to MCP source. Empty array returns all."
+			},
+			"count": {
 				"type": "integer",
 				"description": "Maximum number of log lines to return. Default is 100.",
 				"default": 100
+			},
+			"offset": {
+				"type": "integer",
+				"description": "Number of log entries to skip. Default is 0.",
+				"default": 0
+			},
+			"order": {
+				"type": "string",
+				"description": "Sort order: 'desc' (newest first, default) or 'asc' (oldest first).",
+				"default": "desc",
+				"enum": ["desc", "asc"]
 			}
 		}
 	}
-	
-	# outputSchema
+
 	var output_schema: Dictionary = {
 		"type": "object",
 		"properties": {
 			"logs": {
 				"type": "array",
-				"items": {"type": "string"}
+				"items": {"type": "object"}
 			},
-			"count": {"type": "integer"}
+			"count": {"type": "integer"},
+			"total_available": {"type": "integer"},
+			"source": {"type": "string"}
 		}
 	}
-	
-	# annotations - readOnlyHint = true
+
 	var annotations: Dictionary = {
 		"readOnlyHint": true,
 		"destructiveHint": false,
 		"idempotentHint": true,
 		"openWorldHint": false
 	}
-	
-	# 注册工具
+
 	server_core.register_tool(tool_name, description, input_schema,
 						  Callable(self, "_tool_get_editor_logs"),
 						  output_schema, annotations)
 
 func _tool_get_editor_logs(params: Dictionary) -> Dictionary:
-	var max_lines: int = params.get("max_lines", 100)
-	
+	var source: String = params.get("source", "mcp")
+	var types: Array = params.get("type", [])
+	var count: int = params.get("count", 100)
+	var offset: int = params.get("offset", 0)
+	var order: String = params.get("order", "desc")
+
+	if source == "runtime":
+		return _get_runtime_logs(types, count, offset, order)
+
+	return _get_mcp_logs(types, count, offset, order)
+
+func _get_mcp_logs(types: Array, count: int, offset: int, order: String) -> Dictionary:
 	_log_mutex.lock()
 	if _log_buffer.is_empty():
 		_log_mutex.unlock()
 		return {
 			"logs": [],
 			"count": 0,
-			"note": "No log messages captured yet. Logs are captured from MCP server activity."
+			"total_available": 0,
+			"source": "mcp"
 		}
-	
-	var start_index: int = maxi(0, _log_buffer.size() - max_lines)
-	var logs: Array = _log_buffer.slice(start_index)
+
+	var all_entries: Array = []
+	for i in range(_log_buffer.size()):
+		var line: String = _log_buffer[i]
+		var log_type: String = "Info"
+		var message: String = line
+		if line.begins_with("[ERROR]"):
+			log_type = "Error"
+			message = line.substr(7).strip_edges()
+		elif line.begins_with("[WARNING]"):
+			log_type = "Warning"
+			message = line.substr(9).strip_edges()
+		elif line.begins_with("[INFO]"):
+			log_type = "Info"
+			message = line.substr(6).strip_edges()
+		elif line.begins_with("[DEBUG]"):
+			log_type = "Debug"
+			message = line.substr(7).strip_edges()
+		all_entries.append({"index": i, "type": log_type, "message": message})
+
+	var total_available: int = all_entries.size()
 	_log_mutex.unlock()
-	
+
+	var filtered: Array = all_entries
+	if types.size() > 0:
+		filtered = []
+		for entry in all_entries:
+			if types.has(entry["type"]):
+				filtered.append(entry)
+
+	if order == "desc":
+		filtered.reverse()
+
+	var start: int = mini(offset, filtered.size())
+	var end: int = mini(start + count, filtered.size())
+	var result_logs: Array = filtered.slice(start, end)
+
 	return {
-		"logs": logs,
-		"count": logs.size(),
-		"total_available": _log_buffer.size()
+		"logs": result_logs,
+		"count": result_logs.size(),
+		"total_available": total_available,
+		"source": "mcp"
+	}
+
+func _get_runtime_logs(types: Array, count: int, offset: int, order: String) -> Dictionary:
+	var log_path: String = "user://logs/godot.log"
+	if not FileAccess.file_exists(log_path):
+		return {
+			"logs": [],
+			"count": 0,
+			"total_available": 0,
+			"source": "runtime",
+			"note": "Runtime log file not found: " + log_path
+		}
+
+	var file: FileAccess = FileAccess.open(log_path, FileAccess.READ)
+	if not file:
+		return {"error": "Failed to open runtime log file: " + log_path}
+
+	var all_lines: Array = []
+	while not file.eof_reached():
+		var line: String = file.get_line()
+		if not line.is_empty():
+			all_lines.append(line)
+	file.close()
+
+	var total_available: int = all_lines.size()
+	if total_available == 0:
+		return {
+			"logs": [],
+			"count": 0,
+			"total_available": 0,
+			"source": "runtime"
+		}
+
+	var entries: Array = []
+	if order == "desc":
+		for i in range(total_available - 1, -1, -1):
+			entries.append({"index": i, "type": "Info", "message": all_lines[i]})
+	else:
+		for i in range(total_available):
+			entries.append({"index": i, "type": "Info", "message": all_lines[i]})
+
+	var start: int = mini(offset, entries.size())
+	var end: int = mini(start + count, entries.size())
+	var result_logs: Array = entries.slice(start, end)
+
+	return {
+		"logs": result_logs,
+		"count": result_logs.size(),
+		"total_available": total_available,
+		"source": "runtime"
 	}
 
 # ============================================================================
@@ -254,7 +369,7 @@ func _register_get_performance_metrics(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_get_performance_metrics"),
 						  output_schema, annotations)
 
-static func _tool_get_performance_metrics(params: Dictionary) -> Dictionary:
+func _tool_get_performance_metrics(params: Dictionary) -> Dictionary:
 	# 使用Performance单例获取性能指标
 	var fps: float = Performance.get_monitor(Performance.TIME_FPS)
 	var object_count: int = Performance.get_monitor(Performance.OBJECT_COUNT)
@@ -317,7 +432,7 @@ func _register_debug_print(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_debug_print"),
 						  output_schema, annotations)
 
-static func _tool_debug_print(params: Dictionary) -> Dictionary:
+func _tool_debug_print(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var message: String = params.get("message", "")
 	var category: String = params.get("category", "")
@@ -339,4 +454,95 @@ static func _tool_debug_print(params: Dictionary) -> Dictionary:
 	return {
 		"status": "success",
 		"printed_message": full_message
+	}
+
+# ============================================================================
+# execute_editor_script - 执行完整的编辑器脚本
+# ============================================================================
+
+func _register_execute_editor_script(server_core: RefCounted) -> void:
+	var tool_name: String = "execute_editor_script"
+	var description: String = "Execute a full GDScript in the editor context. Unlike execute_script which only evaluates expressions, this tool can run multi-line scripts with loops, conditionals, and await. Output is captured via print()."
+
+	var input_schema: Dictionary = {
+		"type": "object",
+		"properties": {
+			"code": {
+				"type": "string",
+				"description": "Full GDScript code to execute. Can contain multiple statements, loops, conditionals, and await."
+			}
+		},
+		"required": ["code"]
+	}
+
+	var output_schema: Dictionary = {
+		"type": "object",
+		"properties": {
+			"success": {"type": "boolean"},
+			"output": {"type": "array", "items": {"type": "string"}},
+			"error": {"type": "string"}
+		}
+	}
+
+	var annotations: Dictionary = {
+		"readOnlyHint": false,
+		"destructiveHint": true,
+		"idempotentHint": false,
+		"openWorldHint": true
+	}
+
+	server_core.register_tool(tool_name, description, input_schema,
+						  Callable(self, "_tool_execute_editor_script"),
+						  output_schema, annotations)
+
+func _tool_execute_editor_script(params: Dictionary) -> Dictionary:
+	var code: String = params.get("code", "")
+	if code.is_empty():
+		return {"success": false, "error": "Missing required parameter: code", "output": []}
+
+	var editor_interface: EditorInterface = _get_editor_interface()
+	if not editor_interface:
+		return {"success": false, "error": "Editor interface not available", "output": []}
+
+	var script: GDScript = GDScript.new()
+	var wrapped_code: String = "extends RefCounted\n\nvar _output: Array = []\nvar edited_scene: Node = null\n\nfunc _custom_print(msg) -> void:\n\t_output.append(str(msg))\n\nfunc execute() -> Array:\n"
+	for line in code.split("\n"):
+		wrapped_code += "\t" + line + "\n"
+	wrapped_code += "\n\treturn _output\n"
+
+	script.set_source_code(wrapped_code)
+
+	var reload_ok: Error = script.reload()
+	if reload_ok != OK:
+		return {"success": false, "error": "Script compilation failed. Check syntax.", "output": []}
+
+	var instance: RefCounted = script.new()
+	if not instance:
+		return {"success": false, "error": "Failed to create script instance", "output": []}
+
+	instance.set("_output", [])
+	var edited_scene: Node = editor_interface.get_edited_scene_root()
+	if edited_scene:
+		instance.set("edited_scene", edited_scene)
+
+	var result_output: Variant = instance.call("execute")
+
+	var output: Array = []
+	if result_output is Array:
+		output = result_output
+	elif result_output != null:
+		output.append(str(result_output))
+
+	var instance_output: Variant = instance.get("_output")
+	if instance_output is Array:
+		for item in instance_output:
+			if not output.has(item):
+				output.append(item)
+
+	if instance is RefCounted:
+		pass
+
+	return {
+		"success": true,
+		"output": output
 	}

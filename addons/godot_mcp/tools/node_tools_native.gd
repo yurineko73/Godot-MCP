@@ -232,7 +232,16 @@ func _tool_update_node_property(params: Dictionary) -> Dictionary:
 		if parsed != null:
 			actual_value = parsed
 	var converted_value: Variant = _convert_value_for_property(target_node, property_name, actual_value)
-	target_node.set(property_name, converted_value)
+	
+	var undo_redo: EditorUndoRedoManager = editor_interface.get_editor_undo_redo()
+	if undo_redo:
+		undo_redo.create_action("Update Property: " + property_name)
+		undo_redo.add_do_property(target_node, property_name, converted_value)
+		undo_redo.add_undo_property(target_node, property_name, old_value)
+		undo_redo.commit_action()
+	else:
+		target_node.set(property_name, converted_value)
+	
 	var new_value: Variant = target_node.get(property_name)
 	
 	editor_interface.mark_scene_as_unsaved()

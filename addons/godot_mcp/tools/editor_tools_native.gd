@@ -299,14 +299,21 @@ func _tool_get_selected_nodes(params: Dictionary) -> Dictionary:
 	if not editor_interface:
 		return {"error": "Editor interface not available"}
 	
-	var selected_nodes: Array[String] = []
+	var selected_nodes: Array = []
 	var selection: EditorSelection = editor_interface.get_selection()
 	var scene_root: Node = _get_user_scene_root()
 	
 	if selection:
 		var selected: Array[Node] = selection.get_selected_nodes()
 		for node in selected:
-			selected_nodes.append(_make_friendly_path(node, scene_root))
+			var node_info: Dictionary = {
+				"path": _make_friendly_path(node, scene_root),
+				"type": node.get_class()
+			}
+			var node_script: Variant = node.get_script()
+			if node_script and node_script is Script:
+				node_info["script_path"] = node_script.resource_path
+			selected_nodes.append(node_info)
 	
 	return {
 		"selected_nodes": selected_nodes,

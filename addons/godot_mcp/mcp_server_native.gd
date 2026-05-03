@@ -397,33 +397,50 @@ func _get_resources_count() -> int:
 
 func _register_all_tools() -> void:
 	_log_info("Registering all MCP tools...")
+	printerr("[MCP Plugin][DIAG] _register_all_tools() started")
 	
 	if not _native_server:
 		_log_error("MCP Server instance not available")
+		printerr("[MCP Plugin][DIAG] ABORT: _native_server is null")
 		return
 	
-	_tool_instances["NodeToolsNative"] = NodeToolsNative.new()
-	_tool_instances["ScriptToolsNative"] = ScriptToolsNative.new()
-	_tool_instances["SceneToolsNative"] = SceneToolsNative.new()
-	_tool_instances["EditorToolsNative"] = EditorToolsNative.new()
-	_tool_instances["DebugToolsNative"] = DebugToolsNative.new()
-	_tool_instances["ProjectToolsNative"] = ProjectToolsNative.new()
+	printerr("[MCP Plugin][DIAG] Creating NodeToolsNative...")
+	_register_tool_module("NodeToolsNative", NodeToolsNative.new())
+	printerr("[MCP Plugin][DIAG] Creating ScriptToolsNative...")
+	_register_tool_module("ScriptToolsNative", ScriptToolsNative.new())
+	printerr("[MCP Plugin][DIAG] Creating SceneToolsNative...")
+	_register_tool_module("SceneToolsNative", SceneToolsNative.new())
+	printerr("[MCP Plugin][DIAG] Creating EditorToolsNative...")
+	_register_tool_module("EditorToolsNative", EditorToolsNative.new())
+	printerr("[MCP Plugin][DIAG] Creating DebugToolsNative...")
+	_register_tool_module("DebugToolsNative", DebugToolsNative.new())
+	printerr("[MCP Plugin][DIAG] Creating ProjectToolsNative...")
+	_register_tool_module("ProjectToolsNative", ProjectToolsNative.new())
 	
-	_tool_instances["NodeToolsNative"].initialize(_editor_interface)
-	_tool_instances["ScriptToolsNative"].initialize(_editor_interface)
-	_tool_instances["SceneToolsNative"].initialize(_editor_interface)
-	_tool_instances["EditorToolsNative"].initialize(_editor_interface)
-	_tool_instances["DebugToolsNative"].initialize(_editor_interface)
-	_tool_instances["ProjectToolsNative"].initialize(_editor_interface)
+	var total_tools: int = _native_server.get_tools_count()
+	printerr("[MCP Plugin][DIAG] _register_all_tools() complete. Total tools: %d" % total_tools)
+	_log_info("All MCP tools registered successfully. Total: " + str(total_tools))
+
+func _register_tool_module(module_name: String, instance: RefCounted) -> void:
+	if not instance:
+		printerr("[MCP Plugin][DIAG] FAILED to create instance: " + module_name)
+		return
 	
-	_tool_instances["NodeToolsNative"].register_tools(_native_server)
-	_tool_instances["ScriptToolsNative"].register_tools(_native_server)
-	_tool_instances["SceneToolsNative"].register_tools(_native_server)
-	_tool_instances["EditorToolsNative"].register_tools(_native_server)
-	_tool_instances["DebugToolsNative"].register_tools(_native_server)
-	_tool_instances["ProjectToolsNative"].register_tools(_native_server)
+	printerr("[MCP Plugin][DIAG] Instance created: " + module_name + " OK")
+	_tool_instances[module_name] = instance
 	
-	_log_info("All MCP tools registered successfully")
+	printerr("[MCP Plugin][DIAG] Initializing: " + module_name)
+	if instance.has_method("initialize"):
+		instance.initialize(_editor_interface)
+	printerr("[MCP Plugin][DIAG] Initialized: " + module_name + " OK")
+	
+	printerr("[MCP Plugin][DIAG] Registering tools: " + module_name)
+	var tools_before: int = _native_server.get_tools_count()
+	if instance.has_method("register_tools"):
+		instance.register_tools(_native_server)
+	var tools_after: int = _native_server.get_tools_count()
+	var tools_added: int = tools_after - tools_before
+	printerr("[MCP Plugin][DIAG] Registered: %s (added %d tools, total now %d)" % [module_name, tools_added, tools_after])
 
 # ============================================================================
 # 私有方法 - 资源注册（根据mcp-builder优化）

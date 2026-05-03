@@ -108,7 +108,7 @@ func _register_create_scene(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_create_scene"),
 						  output_schema, annotations)
 
-static func _tool_create_scene(params: Dictionary) -> Dictionary:
+func _tool_create_scene(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var scene_path: String = params.get("scene_path", "")
 	var root_node_type: String = params.get("root_node_type", "Node")
@@ -551,7 +551,7 @@ func _register_list_project_scenes(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_list_project_scenes"),
 						  output_schema, annotations)
 
-static func _tool_list_project_scenes(params: Dictionary) -> Dictionary:
+func _tool_list_project_scenes(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var search_path: String = params.get("search_path", "res://")
 	
@@ -579,7 +579,7 @@ static func _tool_list_project_scenes(params: Dictionary) -> Dictionary:
 	}
 
 # 辅助函数：递归收集场景文件
-static func _collect_scenes(directory_path: String, result: Array[String]) -> void:
+func _collect_scenes(directory_path: String, result: Array[String]) -> void:
 	var dir: DirAccess = DirAccess.open(directory_path)
 	
 	if not dir:

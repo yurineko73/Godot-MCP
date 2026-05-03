@@ -547,18 +547,24 @@ func register_tool(name: String, description: String,
 				  input_schema: Dictionary, callable: Callable,
 				  output_schema: Dictionary = {}, 
 				  annotations: Dictionary = {}) -> void:
-	# 创建工具对象
 	var tool: MCPTypes.MCPTool = MCPTypes.MCPTool.new()
 	tool.name = name
 	tool.description = description
 	tool.input_schema = input_schema
-	tool.output_schema = output_schema  # 新增（根据mcp-builder）
-	tool.annotations = annotations  # 新增（根据mcp-builder）
+	tool.output_schema = output_schema
+	tool.annotations = annotations
 	tool.callable = callable
 	
-	# 验证工具定义
 	if not tool.is_valid():
-		_log_error("Invalid tool definition: " + name)
+		var reason: String = "unknown"
+		if name.is_empty():
+			reason = "name is empty"
+		elif description.is_empty():
+			reason = "description is empty"
+		elif not callable.is_valid():
+			reason = "callable is invalid (method may not exist or object is freed)"
+		_log_error("Invalid tool definition: " + name + " (reason: " + reason + ")")
+		printerr("[MCP][DIAG] Tool '%s' rejected: callable.is_valid()=%s, callable=%s" % [name, str(callable.is_valid()), str(callable)])
 		return
 	
 	_tools[name] = tool

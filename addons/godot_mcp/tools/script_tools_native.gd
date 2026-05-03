@@ -24,20 +24,12 @@ func _get_editor_interface() -> EditorInterface:
 # ============================================================================
 
 func register_tools(server_core: RefCounted) -> void:
-	# 注册list_project_scripts工具
 	_register_list_project_scripts(server_core)
-	
-	# 注册read_script工具
 	_register_read_script(server_core)
-	
-	# 注册create_script工具
 	_register_create_script(server_core)
-	
-	# 注册modify_script工具
 	_register_modify_script(server_core)
-	
-	# 注册analyze_script工具
 	_register_analyze_script(server_core)
+	_register_get_current_script(server_core)
 
 # ============================================================================
 # list_project_scripts - 列出所有脚本
@@ -84,7 +76,7 @@ func _register_list_project_scripts(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_list_project_scripts"),
 						  output_schema, annotations)
 
-static func _tool_list_project_scripts(params: Dictionary) -> Dictionary:
+func _tool_list_project_scripts(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var search_path: String = params.get("search_path", "res://")
 	
@@ -109,7 +101,7 @@ static func _tool_list_project_scripts(params: Dictionary) -> Dictionary:
 	}
 
 # 辅助函数：递归收集脚本文件
-static func _collect_scripts(directory_path: String, result: Array) -> void:
+func _collect_scripts(directory_path: String, result: Array) -> void:
 	var dir: DirAccess = DirAccess.open(directory_path)
 	
 	if not dir:
@@ -181,7 +173,7 @@ func _register_read_script(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_read_script"),
 						  output_schema, annotations)
 
-static func _tool_read_script(params: Dictionary) -> Dictionary:
+func _tool_read_script(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var script_path: String = params.get("script_path", "")
 	
@@ -238,6 +230,10 @@ func _register_create_script(server_core: RefCounted) -> void:
 			"template": {
 				"type": "string",
 				"description": "Optional template to use: 'empty', 'node', 'characterbody2d', 'characterbody3d', 'area2d', 'area3d'. Default is 'empty'."
+			},
+			"attach_to_node": {
+				"type": "string",
+				"description": "Optional node path to attach the script to after creation (e.g. '/root/MainScene/Player')."
 			}
 		},
 		"required": ["script_path"]
@@ -266,52 +262,73 @@ func _register_create_script(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_create_script"),
 						  output_schema, annotations)
 
-static func _tool_create_script(params: Dictionary) -> Dictionary:
-	# 参数提取
+func _tool_create_script(params: Dictionary) -> Dictionary:
 	var script_path: String = params.get("script_path", "")
 	var content: String = params.get("content", "")
 	var template: String = params.get("template", "empty")
-	
-	# 参数验证
+	var attach_to_node: String = params.get("attach_to_node", "")
+
 	if script_path.is_empty():
 		return {"error": "Missing required parameter: script_path"}
-	
-	# 使用PathValidator验证路径安全性
+
 	var validation: Dictionary = PathValidator.validate_file_path(script_path, [".gd"])
 	if not validation["valid"]:
 		return {"error": "Invalid path: " + validation["error"]}
-	
-	# 使用清理后的路径
+
 	script_path = validation["sanitized"]
-	
-	# 检查文件是否已存在
+
 	if FileAccess.file_exists(script_path):
 		return {"error": "File already exists: " + script_path}
-	
-	# 如果没有提供内容，使用模板
+
 	if content.is_empty():
 		content = _get_script_template(template)
-	
-	# 写入文件
+
 	var file: FileAccess = FileAccess.open(script_path, FileAccess.WRITE)
-	
 	if not file:
 		return {"error": "Failed to create file: " + script_path}
-	
+
 	file.store_string(content)
 	file.close()
-	
-	# 计算行数
+
 	var line_count: int = content.split("\n").size()
-	
-	return {
+	var result: Dictionary = {
 		"status": "success",
 		"script_path": script_path,
 		"line_count": line_count
 	}
 
+	if not attach_to_node.is_empty():
+		var editor_interface: EditorInterface = _get_editor_interface()
+		if editor_interface:
+			var node: Node = _resolve_node_path(editor_interface, attach_to_node)
+			if node:
+				var script_res: Script = load(script_path)
+				if script_res:
+					node.set_script(script_res)
+					result["attached_to"] = attach_to_node
+					editor_interface.get_resource_filesystem().scan()
+				else:
+					result["attach_warning"] = "Script created but failed to load for attachment"
+			else:
+				result["attach_warning"] = "Node not found: " + attach_to_node
+		else:
+			result["attach_warning"] = "Editor interface not available for script attachment"
+
+	return result
+
+func _resolve_node_path(editor_interface: EditorInterface, path: String) -> Node:
+	var edited_scene: Node = editor_interface.get_edited_scene_root()
+	if not edited_scene:
+		return null
+	if path == str(edited_scene.get_path()) or path == "/root/" + edited_scene.name:
+		return edited_scene
+	if path.begins_with("/root/" + edited_scene.name + "/"):
+		var relative: String = path.substr(("/root/" + edited_scene.name + "/").length())
+		return edited_scene.get_node_or_null(relative)
+	return edited_scene.get_node_or_null(path)
+
 # 辅助函数：获取脚本模板
-static func _get_script_template(template_name: String) -> String:
+func _get_script_template(template_name: String) -> String:
 	if template_name == "node":
 		return """@tool
 extends Node
@@ -392,7 +409,7 @@ func _register_modify_script(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_modify_script"),
 						  output_schema, annotations)
 
-static func _tool_modify_script(params: Dictionary) -> Dictionary:
+func _tool_modify_script(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var script_path: String = params.get("script_path", "")
 	var new_content: String = params.get("content", "")
@@ -501,7 +518,7 @@ func _register_analyze_script(server_core: RefCounted) -> void:
 						  Callable(self, "_tool_analyze_script"),
 						  output_schema, annotations)
 
-static func _tool_analyze_script(params: Dictionary) -> Dictionary:
+func _tool_analyze_script(params: Dictionary) -> Dictionary:
 	# 参数提取
 	var script_path: String = params.get("script_path", "")
 	
@@ -546,9 +563,12 @@ static func _tool_analyze_script(params: Dictionary) -> Dictionary:
 			var func_name: String = trimmed.replace("func ", "").split("(")[0]
 			functions.append(func_name)
 		elif trimmed.begins_with("signal "):
-			# 提取信号名
 			var signal_name: String = trimmed.replace("signal ", "").split("(")[0]
 			signals.append(signal_name)
+		elif trimmed.begins_with("var ") and not trimmed.begins_with("var _"):
+			var var_part: String = trimmed.replace("var ", "").split(":")[0].split("=")[0].strip_edges()
+			if not var_part.is_empty():
+				properties.append(var_part)
 	
 	file.close()
 	
@@ -556,8 +576,74 @@ static func _tool_analyze_script(params: Dictionary) -> Dictionary:
 		"script_path": script_path,
 		"has_class_name": has_class_name,
 		"extends_from": extends_from,
+		"language": "gdscript" if script_path.ends_with(".gd") else "csharp" if script_path.ends_with(".cs") else "unknown",
 		"functions": functions,
 		"signals": signals,
 		"properties": properties,
+		"line_count": line_count
+	}
+
+# ============================================================================
+# get_current_script - 获取当前正在编辑的脚本
+# ============================================================================
+
+func _register_get_current_script(server_core: RefCounted) -> void:
+	var tool_name: String = "get_current_script"
+	var description: String = "Get the script currently being edited in the Godot script editor. Returns the script path and content."
+
+	var input_schema: Dictionary = {
+		"type": "object",
+		"properties": {}
+	}
+
+	var output_schema: Dictionary = {
+		"type": "object",
+		"properties": {
+			"script_found": {"type": "boolean"},
+			"script_path": {"type": "string"},
+			"content": {"type": "string"},
+			"line_count": {"type": "integer"}
+		}
+	}
+
+	var annotations: Dictionary = {
+		"readOnlyHint": true,
+		"destructiveHint": false,
+		"idempotentHint": true,
+		"openWorldHint": false
+	}
+
+	server_core.register_tool(tool_name, description, input_schema,
+						  Callable(self, "_tool_get_current_script"),
+						  output_schema, annotations)
+
+func _tool_get_current_script(params: Dictionary) -> Dictionary:
+	var editor_interface: EditorInterface = _get_editor_interface()
+	if not editor_interface:
+		return {"error": "Editor interface not available"}
+
+	var script_editor: ScriptEditor = editor_interface.get_script_editor()
+	if not script_editor:
+		return {"script_found": false, "message": "Script editor not available"}
+
+	var current_script: Script = script_editor.get_current_script()
+	if not current_script:
+		return {"script_found": false, "message": "No script is currently being edited"}
+
+	var script_path: String = current_script.resource_path
+
+	var file: FileAccess = FileAccess.open(script_path, FileAccess.READ)
+	if not file:
+		return {"error": "Failed to open script file: " + script_path}
+
+	var content: String = file.get_as_text()
+	file.close()
+
+	var line_count: int = content.split("\n").size()
+
+	return {
+		"script_found": true,
+		"script_path": script_path,
+		"content": content,
 		"line_count": line_count
 	}
