@@ -79,6 +79,10 @@ func test_plugin_name():
 	var methods: Array = _plugin_script.get_script_method_list()
 	var method_names: Array = methods.map(func(m): return m["name"])
 	assert_true(method_names.has("_get_plugin_name"), "Should have _get_plugin_name method")
+	assert_true(method_names.has("_has_main_screen"), "Should have _has_main_screen method for main screen plugin")
+	assert_true(method_names.has("_make_visible"), "Should have _make_visible method for main screen plugin")
+	assert_true(method_names.has("_get_plugin_icon"), "Should have _get_plugin_icon method for main screen plugin")
+	assert_true(method_names.has("_create_main_screen_panel"), "Should have _create_main_screen_panel method")
 
 func test_export_variables():
 	var script_props: Array = _plugin_script.get_script_property_list()

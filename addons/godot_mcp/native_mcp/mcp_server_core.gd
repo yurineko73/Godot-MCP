@@ -337,18 +337,18 @@ func _handle_initialized_notification(message: Dictionary) -> Dictionary:
 func _handle_tools_list(message: Dictionary) -> Dictionary:
 	var id: Variant = message.get("id")
 	
-	_log_info("Tools list requested. Available tools: " + str(_tools.size()))
-	
 	# 构建工具列表（根据mcp-builder，包含annotations和outputSchema）
 	var tools_list: Array[Dictionary] = []
 	
 	for tool_name in _tools:
 		var tool: MCPTypes.MCPTool = _tools[tool_name]
-		if tool and tool.is_valid():
+		if tool and tool.is_valid() and tool.enabled:
 			tools_list.append(tool.to_dict())
 	
 	var result: Dictionary = {"tools": tools_list}
 	var response: Dictionary = MCPTypes.create_response(id, result)
+	
+	_log_info("Tools list requested. Available tools: " + str(tools_list.size()) + " (registered: " + str(_tools.size()) + ")")
 	
 	_log_debug("Tools list response: " + JSON.stringify(response))
 	
@@ -376,6 +376,17 @@ func _handle_tool_call(message: Dictionary) -> Dictionary:
 		return MCPTypes.create_response(id, error_result)
 	
 	var tool: MCPTypes.MCPTool = _tools[tool_name]
+	
+	if not tool.enabled:
+		_log_error("Tool is disabled: " + tool_name)
+		var error_result: Dictionary = {
+			"content": [{
+				"type": "text",
+				"text": "Tool is disabled: " + tool_name
+			}],
+			"isError": true
+		}
+		return MCPTypes.create_response(id, error_result)
 	
 	# 发送开始信号
 	tool_execution_started.emit(tool_name, arguments)
@@ -595,17 +606,17 @@ func get_registered_tools() -> Array:
 			tools_info.append({
 				"name": tool.name,
 				"description": tool.description,
-				"enabled": true
+				"enabled": tool.enabled
 			})
 	return tools_info
 
 func set_tool_enabled(tool_name: String, enabled: bool) -> void:
 	if _tools.has(tool_name):
-		if not enabled:
-			_tools.erase(tool_name)
-			_log_info("Tool disabled: " + tool_name)
+		_tools[tool_name].enabled = enabled
+		if enabled:
+			_log_info("Tool enabled: " + tool_name)
 		else:
-			_log_info("Tool already enabled: " + tool_name)
+			_log_info("Tool disabled: " + tool_name)
 	else:
 		if enabled:
 			_log_warn("Cannot enable unregistered tool: " + tool_name)

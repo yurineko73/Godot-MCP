@@ -6,6 +6,17 @@ func test_mcp_tool_info_valid():
 	tool.description = "A test tool"
 	tool.callable = func(args): return {}
 	assert_true(tool.is_valid(), "Tool with all fields should be valid")
+	assert_true(tool.enabled, "Newly created tool should be enabled by default")
+
+func test_mcp_tool_enabled_flag():
+	var tool: MCPTypes.MCPTool = MCPTypes.MCPTool.new()
+	tool.name = "test_tool"
+	tool.description = "A test tool"
+	tool.callable = func(args): return {}
+	assert_true(tool.enabled, "Tool should be enabled by default")
+	tool.enabled = false
+	assert_false(tool.enabled, "Tool should be disabled after setting enabled=false")
+	assert_true(tool.is_valid(), "Disabled tool should still be valid")
 
 func test_mcp_tool_info_missing_name():
 	var tool: MCPTypes.MCPTool = MCPTypes.MCPTool.new()

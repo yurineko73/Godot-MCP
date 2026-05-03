@@ -13,7 +13,7 @@ extends EditorPlugin
 		auto_start = value
 		notify_property_list_changed()
 
-@export var transport_mode: String = "stdio":
+@export var transport_mode: String = "http":
 	set(value):
 		if value == "stdio" or value == "http":
 			transport_mode = value
@@ -88,8 +88,7 @@ extends EditorPlugin
 # ============================================================================
 
 var _native_server: RefCounted = null
-var _dock: EditorDock = null
-var _bottom_panel: Control = null
+var _main_panel: Control = null
 var _editor_interface: EditorInterface = null
 var _mcp_server_mode: bool = false
 var _tool_instances: Dictionary = {}
@@ -172,7 +171,7 @@ func _enter_tree() -> void:
 	_register_all_resources()
 	
 	# 创建UI面板
-	_create_ui_panel()
+	_create_main_screen_panel()
 	
 	# 检测是否以MCP服务器模式启动
 	_mcp_server_mode = "--mcp-server" in OS.get_cmdline_user_args()
@@ -191,18 +190,14 @@ func _enter_tree() -> void:
 func _exit_tree() -> void:
 	_log_info("Godot Native MCP Plugin exiting tree...")
 	
-	# 停止服务器
 	if _native_server and _native_server.is_running():
 		_native_server.stop()
 	
-	# 清理UI
-	if _dock:
-		remove_dock(_dock)
-		_dock.queue_free()
-		_dock = null
-		_bottom_panel = null
+	if _main_panel:
+		EditorInterface.get_editor_main_screen().remove_child(_main_panel)
+		_main_panel.queue_free()
+		_main_panel = null
 	
-	# 清理服务器实例
 	_native_server = null
 	
 	_log_info("Godot Native MCP Plugin shutdown complete")
@@ -211,8 +206,18 @@ func _exit_tree() -> void:
 # 插件配置（根据godot-dev-guide优化）
 # ============================================================================
 
+func _has_main_screen() -> bool:
+	return true
+
+func _make_visible(visible: bool) -> void:
+	if _main_panel:
+		_main_panel.visible = visible
+
 func _get_plugin_name() -> String:
-	return "Godot Native MCP Server"
+	return "MCP"
+
+func _get_plugin_icon() -> Texture2D:
+	return EditorInterface.get_editor_theme().get_icon("Network", "EditorIcons")
 
 func get_native_server() -> RefCounted:
 	return _native_server
@@ -741,34 +746,31 @@ static func _get_godot_version() -> Dictionary:
 # UI面板创建
 # ============================================================================
 
-func _create_ui_panel() -> void:
-	_log_info("Creating UI panel...")
+func _create_main_screen_panel() -> void:
+	_log_info("Creating main screen panel...")
 	
 	var panel_scene: PackedScene = load("res://addons/godot_mcp/ui/mcp_panel_native.tscn")
 	if not panel_scene:
 		_log_error("Failed to load MCP panel scene")
 		return
 	
-	_bottom_panel = panel_scene.instantiate()
-	if not _bottom_panel:
+	_main_panel = panel_scene.instantiate()
+	if not _main_panel:
 		_log_error("Failed to instantiate MCP panel")
 		return
 	
-	_dock = EditorDock.new()
-	_dock.title = "MCP Server"
-	_dock.default_slot = EditorDock.DOCK_SLOT_BOTTOM
-	_dock.add_child(_bottom_panel)
-	add_dock(_dock)
+	EditorInterface.get_editor_main_screen().add_child(_main_panel)
+	_make_visible(false)
 	
-	if _bottom_panel.has_method("set_plugin"):
-		_bottom_panel.set_plugin(self)
+	if _main_panel.has_method("set_plugin"):
+		_main_panel.set_plugin(self)
 		_log_info("Plugin reference set to panel")
 	
-	if _native_server and _bottom_panel.has_method("set_server_core"):
-		_bottom_panel.set_server_core(_native_server)
+	if _native_server and _main_panel.has_method("set_server_core"):
+		_main_panel.set_server_core(_native_server)
 		_log_info("Server core reference set to panel")
 	
-	_log_info("UI panel created successfully")
+	_log_info("Main screen panel created successfully")
 
 # ============================================================================
 # 信号回调
@@ -776,29 +778,29 @@ func _create_ui_panel() -> void:
 
 func _on_server_started() -> void:
 	_log_info("MCP Server started")
-	if _bottom_panel and _bottom_panel.has_method("refresh"):
+	if _main_panel and _main_panel.has_method("refresh"):
 		if Thread.is_main_thread():
-			_bottom_panel.refresh()
+			_main_panel.refresh()
 		else:
-			_bottom_panel.call_deferred("refresh")
+			_main_panel.call_deferred("refresh")
 
 func _on_server_stopped() -> void:
 	_log_info("MCP Server stopped")
-	if _bottom_panel and _bottom_panel.has_method("refresh"):
+	if _main_panel and _main_panel.has_method("refresh"):
 		if Thread.is_main_thread():
-			_bottom_panel.refresh()
+			_main_panel.refresh()
 		else:
-			_bottom_panel.call_deferred("refresh")
+			_main_panel.call_deferred("refresh")
 
 func _on_message_received(message: Dictionary) -> void:
 	_log_debug("Message received: " + JSON.stringify(message))
-	if _bottom_panel and _bottom_panel.has_method("update_log"):
-		_bottom_panel.update_log("[RECV] " + JSON.stringify(message))
+	if _main_panel and _main_panel.has_method("update_log"):
+		_main_panel.update_log("[RECV] " + JSON.stringify(message))
 
 func _on_response_sent(response: Dictionary) -> void:
 	_log_debug("Response sent: " + JSON.stringify(response))
-	if _bottom_panel and _bottom_panel.has_method("update_log"):
-		_bottom_panel.update_log("[SENT] " + JSON.stringify(response))
+	if _main_panel and _main_panel.has_method("update_log"):
+		_main_panel.update_log("[SENT] " + JSON.stringify(response))
 
 func _on_tool_started(tool_name: String, params: Dictionary) -> void:
 	_log_info("Tool started: " + tool_name)
@@ -810,8 +812,8 @@ func _on_tool_failed(tool_name: String, error: String) -> void:
 	_log_error("Tool failed: " + tool_name + " - " + error)
 
 func _on_log_message(level: String, message: String) -> void:
-	if _bottom_panel and _bottom_panel.has_method("update_log"):
-		_bottom_panel.update_log("[" + level + "] " + message)
+	if _main_panel and _main_panel.has_method("update_log"):
+		_main_panel.update_log("[" + level + "] " + message)
 	
 	match level:
 		"ERROR":

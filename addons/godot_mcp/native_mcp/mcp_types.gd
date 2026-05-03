@@ -57,19 +57,13 @@ enum LogLevel {
 # ============================================================================
 
 class MCPTool:
-	# 基本属性
 	var name: String = ""
 	var description: String = ""
 	var input_schema: Dictionary = {}
-	
-	# 新增：outputSchema（根据mcp-builder）
 	var output_schema: Dictionary = {}
-	
-	# 新增：annotations（根据mcp-builder）
 	var annotations: Dictionary = {}
-	
-	# 可调用对象
 	var callable: Callable = Callable()
+	var enabled: bool = true
 	
 	# 转换为Dictionary（用于JSON序列化）
 	func to_dict() -> Dictionary:

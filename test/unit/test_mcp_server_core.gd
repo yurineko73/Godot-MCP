@@ -34,7 +34,49 @@ func test_unregister_tool():
 func test_set_tool_enabled():
 	_core.register_tool("test_tool", "A test tool", {"type": "object"}, func(args): return {"status": "ok"})
 	_core.set_tool_enabled("test_tool", false)
-	assert_false(_core.has_tool("test_tool"), "Disabled tool should be removed from tools")
+	assert_true(_core.has_tool("test_tool"), "Disabled tool should still exist in tools dict")
+	var tools: Array = _core.get_registered_tools()
+	var found: bool = false
+	for t in tools:
+		if t.get("name") == "test_tool":
+			assert_false(t.get("enabled", true), "Disabled tool should have enabled=false")
+			found = true
+	assert_true(found, "Disabled tool should appear in get_registered_tools")
+
+func test_set_tool_enabled_re_enable():
+	_core.register_tool("test_tool", "A test tool", {"type": "object"}, func(args): return {"status": "ok"})
+	_core.set_tool_enabled("test_tool", false)
+	_core.set_tool_enabled("test_tool", true)
+	assert_true(_core.has_tool("test_tool"), "Re-enabled tool should exist")
+	var tools: Array = _core.get_registered_tools()
+	for t in tools:
+		if t.get("name") == "test_tool":
+			assert_true(t.get("enabled", false), "Re-enabled tool should have enabled=true")
+
+func test_disabled_tool_not_in_tools_list():
+	_core.register_tool("test_tool", "A test tool", {"type": "object"}, func(args): return {"status": "ok"})
+	_core.register_tool("other_tool", "Another tool", {"type": "object"}, func(args): return {"status": "ok"})
+	_core.set_tool_enabled("test_tool", false)
+	var msg: Dictionary = {"id": 1, "method": "tools/list"}
+	var response: Dictionary = _core._handle_tools_list(msg)
+	var tools_list: Array = response.get("result", {}).get("tools", [])
+	assert_eq(tools_list.size(), 1, "Should only have 1 enabled tool in tools/list response")
+	if tools_list.size() > 0:
+		assert_eq(tools_list[0].get("name", ""), "other_tool", "Only other_tool should appear")
+
+func test_disabled_tool_call_returns_error():
+	_core.register_tool("test_tool", "A test tool", {"type": "object"}, func(args): return {"status": "ok"})
+	_core.set_tool_enabled("test_tool", false)
+	var msg: Dictionary = {"id": 2, "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}}
+	var response: Dictionary = _core._handle_tool_call(msg)
+	assert_true(response.get("result", {}).get("isError", false), "Calling disabled tool should return isError")
+
+func test_tool_enabled_default():
+	_core.register_tool("test_tool", "A test tool", {"type": "object"}, func(args): return {"status": "ok"})
+	var tools: Array = _core.get_registered_tools()
+	for t in tools:
+		if t.get("name") == "test_tool":
+			assert_true(t.get("enabled", false), "Newly registered tool should be enabled by default")
 
 func test_get_tools_count():
 	assert_eq(_core.get_tools_count(), 0, "Should have 0 tools initially")
